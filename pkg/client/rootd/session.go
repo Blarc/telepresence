@@ -754,13 +754,14 @@ func (s *Session) onClusterInfo(ctx context.Context, mgrInfo *manager.ClusterInf
 			var err error
 			dnsIP, err = s.vipGenerator.Next()
 			if err != nil {
+				dlog.Error(ctx, "Failed to generate VIP for DNS:", err)
 				return nil
 			}
+			dlog.Infof(ctx, "Using generated VIP %v for DNS", dnsIP)
 		} else {
 			if s.dnsServerSubnet == nil {
 				s.createSubnetForDNSOnly(ctx, mgrInfo)
 			}
-			dlog.Infof(ctx, "Adding Service subnet %s (for DNS only)", s.dnsServerSubnet)
 			subnets = append(subnets, s.dnsServerSubnet)
 			dnsIP = make(net.IP, len(s.dnsServerSubnet.IP))
 			copy(dnsIP, s.dnsServerSubnet.IP)
@@ -772,14 +773,14 @@ func (s *Session) onClusterInfo(ctx context.Context, mgrInfo *manager.ClusterInf
 	if len(subnets) > 0 && s.tunVif == nil {
 		var err error
 		if s.tunVif, err = vif.NewTunnelingDevice(ctx, s.streamCreator()); err != nil {
+			dlog.Error(ctx, "Failed to create TUN device:", err)
 			return fmt.Errorf("NewTunnelVIF: %w", err)
 		}
 	}
 
 	if dnsRouted {
 		d := mgrInfo.Dns
-		dlog.Infof(ctx, "Setting cluster DNS to %s", dnsIP)
-		dlog.Infof(ctx, "Setting cluster domain to %q", d.ClusterDomain)
+		dlog.Infof(ctx, "Setting cluster DNS %s with domain %q", dnsIP, d.ClusterDomain)
 		s.dnsServer.SetClusterDNS(d, dnsIP)
 		span.SetAttributes(
 			attribute.Stringer("tel2.cluster-dns", dnsIP),
@@ -1134,10 +1135,13 @@ func (s *Session) activateProxyViaWorkloads(ctx context.Context) error {
 	if sl == 0 {
 		return nil
 	}
+
 	_, vipSubnet, err := net.ParseCIDR(client.GetConfig(ctx).Cluster().VirtualIPSubnet)
 	if err != nil {
+		dlog.Error(ctx, "Failed to parse cluster.virtualIPSubnet:", err)
 		return fmt.Errorf("unable to parse configuration value cluster.virtualIPSubnet: %w", err)
 	}
+
 	s.vipGenerator = vip.NewGenerator(vipSubnet)
 	s.localTranslationSubnets = make([]agentSubnet, sl)
 	for _, wlName := range s.consolidateProxyViaWorkloads(ctx) {
