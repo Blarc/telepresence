@@ -104,6 +104,10 @@ Users can now use the Helm value `agent.initSecurityContext` to override the def
   </Body>
 </Note>
 <Note>
+	<Title type="change">Let download page use direct links to GitHub</Title>
+	<Body>The download links on the release page now points directly to the assets on the download page, instead of using being routed from getambassador.io/download/tel2oss/releases.</Body>
+</Note>
+<Note>
 	<Title type="change">Use telepresence.io as annotation prefix instead of telepresence.getambassador.io</Title>
 	<Body>The workload and pod annotations used by Telepresence will now use the prefix `telepresence.io` instead of `telepresence.getambassador.io`. The new prefix is consistent with the prefix used by labels, and it also matches the host name of the documentation site. Annotations using the old name will still work, but warnings will be logged when they are encountered.</Body>
 </Note>

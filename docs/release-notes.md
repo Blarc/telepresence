@@ -99,6 +99,12 @@ The output of the `telepresence list` command will now include the workload kind
 Users can now use the Helm value `agent.initSecurityContext` to override the default securityContext for the Telepresence init-container.
 </div>
 
+## <div style="display:flex;"><img src="images/change.png" alt="change" style="width:30px;height:fit-content;"/><div style="display:flex;margin-left:7px;">Let download page use direct links to GitHub</div></div>
+<div style="margin-left: 15px">
+
+The download links on the release page now points directly to the assets on the download page, instead of using being routed from getambassador.io/download/tel2oss/releases.
+</div>
+
 ## <div style="display:flex;"><img src="images/change.png" alt="change" style="width:30px;height:fit-content;"/><div style="display:flex;margin-left:7px;">Use telepresence.io as annotation prefix instead of telepresence.getambassador.io</div></div>
 <div style="margin-left: 15px">
 
