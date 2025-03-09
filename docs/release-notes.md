@@ -82,9 +82,6 @@ client will mount them, can now be provided using the Helm chart value `agent.mo
 object in the workload annotation `telepresence.io/mount-policies`. A mount policy is applied to a volume
 or to all paths matching a path-prefix (distinguished by checking if first character is a '/'), and can
 be one of `Ignore`, `Local`, `Remote`, or `RemoteReadOnly`.
-
-Mount policies deprecates the `telepresenceio.getambassador.com/ignore-volume-mounts` annotation. It will
-still work but will be removed in a future release.
 </div>
 
 ## <div style="display:flex;"><img src="images/feature.png" alt="feature" style="width:30px;height:fit-content;"/><div style="display:flex;margin-left:7px;">List output includes workload kind.</div></div>
