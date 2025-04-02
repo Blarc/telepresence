@@ -7,6 +7,7 @@ const (
 	Session           = "session"
 	VersionCheck      = "versionCheck"
 	UpdateCheckFormat = "updateCheckFormat"
+	Progress          = "progress"
 )
 
 // -- Annotation values

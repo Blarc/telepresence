@@ -12,6 +12,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ann"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 )
@@ -63,6 +64,7 @@ func (u *uninstallCommand) run(cmd *cobra.Command, args []string) error {
 	if err := connect.InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	ur := &connector.UninstallRequest{
 		UninstallType: 0,
 	}

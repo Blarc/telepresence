@@ -20,6 +20,7 @@ following Free and Open Source software:
     github.com/cenkalti/backoff/v4                                 v4.3.0                                MIT license
     github.com/cespare/xxhash/v2                                   v2.3.0                                MIT license
     github.com/chai2010/gettext-go                                 v1.0.3                                3-clause BSD license
+    github.com/compose-spec/compose-go/v2                          v2.6.0                                Apache License 2.0, MIT license
     github.com/containerd/containerd                               v1.7.27                               Apache License 2.0
     github.com/containerd/errdefs                                  v1.0.0                                Apache License 2.0
     github.com/containerd/log                                      v0.1.0                                Apache License 2.0
@@ -58,6 +59,7 @@ following Free and Open Source software:
     github.com/go-openapi/jsonpointer                              v0.21.1                               Apache License 2.0
     github.com/go-openapi/jsonreference                            v0.21.0                               Apache License 2.0
     github.com/go-openapi/swag                                     v0.23.1                               Apache License 2.0
+    github.com/go-viper/mapstructure/v2                            v2.0.0                                MIT license
     github.com/gobwas/glob                                         v0.2.3                                MIT license
     github.com/godbus/dbus/v5                                      v5.1.0                                2-clause BSD license
     github.com/gogo/protobuf                                       v1.3.2                                3-clause BSD license
@@ -93,6 +95,7 @@ following Free and Open Source software:
     github.com/mattn/go-colorable                                  v0.1.14                               MIT license
     github.com/mattn/go-isatty                                     v0.0.20                               MIT license
     github.com/mattn/go-runewidth                                  v0.0.16                               MIT license
+    github.com/mattn/go-shellwords                                 v1.0.12                               MIT license
     github.com/miekg/dns                                           v1.1.65                               3-clause BSD license
     github.com/mitchellh/copystructure                             v1.2.0                                MIT license
     github.com/mitchellh/go-wordwrap                               v1.0.1                                MIT license
@@ -104,6 +107,7 @@ following Free and Open Source software:
     github.com/modern-go/concurrent                                v0.0.0-20180306012644-bacd9c7ef1dd    Apache License 2.0
     github.com/modern-go/reflect2                                  v1.0.2                                Apache License 2.0
     github.com/monochromegane/go-gitignore                         v0.0.0-20200626010858-205db1a8cc00    MIT license
+    github.com/morikuni/aec                                        v1.0.0                                MIT license
     github.com/munnerz/goautoneg                                   v0.0.0-20191010083416-a7dc8b61c822    3-clause BSD license
     github.com/mxk/go-flowrate                                     v0.0.0-20140419014527-cca7078d478f    3-clause BSD license
     github.com/opencontainers/go-digest                            v1.0.0                                Apache License 2.0
@@ -139,6 +143,7 @@ following Free and Open Source software:
     github.com/xeipuuv/gojsonpointer                               v0.0.0-20190905194746-02993c407bfb    Apache License 2.0
     github.com/xeipuuv/gojsonreference                             v0.0.0-20180127040603-bd5ef7bd5415    Apache License 2.0
     github.com/xeipuuv/gojsonschema                                v1.2.0                                Apache License 2.0
+    github.com/xhit/go-str2duration/v2                             v2.1.0                                3-clause BSD license
     github.com/xlab/treeprint                                      v1.2.0                                MIT license
     go.opentelemetry.io/auto/sdk                                   v1.1.0                                Apache License 2.0
     go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp  v0.60.0                               Apache License 2.0

@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
-	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/spinner"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 )
@@ -105,20 +105,20 @@ func (f *Flags) Validate(args []string) error {
 
 // PullOrBuildImage will pull or build the image and return the args list suitable
 // when starting it.
-func (f *Flags) PullOrBuildImage(ctx context.Context) error {
+func (f *Flags) PullOrBuildImage(ctx context.Context, progressID string) error {
 	if f.Image != "" {
-		return docker.PullImage(ctx, f.Image)
+		return docker.PullImage(ctx, progressID, f.Image)
 	}
 	opts := make([]string, len(f.BuildOptions))
 	for i, opt := range f.BuildOptions {
 		opts[i] = "--" + opt
 	}
-	spin := spinner.New(ctx, "building docker image")
+	progress.Write(ctx, progress.BuildingEvent(progressID))
 	imageID, err := docker.BuildImage(ctx, f.Context, opts)
 	if err != nil {
-		return spin.Error(err)
+		return progress.MaybeWriteError(ctx, progressID, err)
 	}
-	spin.DoneMsg("image built successfully")
+	progress.Write(ctx, progress.BuiltEvent(progressID))
 	if f.imageIndex < 0 {
 		f.args = []string{imageID}
 		f.imageIndex = 0

@@ -22,7 +22,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/env"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/mount"
-	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/spinner"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
@@ -60,7 +60,11 @@ func (s *Runner) Run(ctx context.Context, waitMessage string, args ...string) er
 			s.Flags.PublishedPorts = append(s.Flags.PublishedPorts, pps...)
 		}
 		if nts := runFlags.Networks; len(nts) > 0 {
-			connectCancel, err := ConnectNetworksToDaemon(ctx, runFlags.Networks, ud.DaemonID().ContainerName())
+			ns := make([]Network, len(nts))
+			for i, n := range nts {
+				ns[i] = Network{Name: n}
+			}
+			connectCancel, err := ConnectNetworksToDaemon(ctx, ud.DaemonID().ContainerName(), ns)
 			defer connectCancel()
 			if err != nil {
 				return err
@@ -101,18 +105,17 @@ func (s *Runner) Run(ctx context.Context, waitMessage string, args ...string) er
 	outRdr, outWrt := io.Pipe()
 	procCtx = dos.WithStdout(procCtx, outWrt)
 
-	spin := spinner.New(ctx, "container "+s.ContainerName)
 	w := s.start(procCtx, s.ContainerName, envFile, runFlags, args)
 	if w.err == nil {
 		w.err = ud.AddHandler(ctx, s.Environment["TELEPRESENCE_INTERCEPT_ID"], w.cmd, w.name)
-		spin.Message("started")
-		spin.DoneMsg(waitMessage)
-		if waitMessage != "" && spin.IsNoOp() {
-			ioutil.Println(dos.Stdout(ctx), waitMessage)
-		}
+		progress.Write(ctx, progress.StartedEvent(s.ContainerName))
 	} else {
-		_ = spin.Error(w.err)
+		w.err = progress.MaybeWriteError(ctx, s.ContainerName, w.err)
 	}
+
+	// Can't have the progress monitor running and show process output at the same time.
+	progress.Stop(ctx)
+
 	go func() {
 		_, _ = io.Copy(dos.Stdout(ctx), outRdr)
 	}()
@@ -121,9 +124,8 @@ func (s *Runner) Run(ctx context.Context, waitMessage string, args ...string) er
 	}()
 
 	if err = w.wait(procCtx); err != nil {
-		return spin.Error(err)
+		return err
 	}
-	spin.Done()
 	return nil
 }
 

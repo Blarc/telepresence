@@ -77,7 +77,7 @@ func Main(ctx context.Context) {
 		}
 	} else {
 		if cmd, fmtOutput, err := output.Execute(cmd.Telepresence(ctx)); err != nil {
-			if fmtOutput {
+			if fmtOutput || errcat.GetCategory(err) == errcat.Silent {
 				os.Exit(1)
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "%s: error: %v\n", cmd.CommandPath(), err)

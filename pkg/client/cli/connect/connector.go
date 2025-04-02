@@ -28,13 +28,12 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/authenticator/patcher"
 	"github.com/telepresenceio/telepresence/v2/pkg/client"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
-	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/socket"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 	"github.com/telepresenceio/telepresence/v2/pkg/filelocation"
-	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 	"github.com/telepresenceio/telepresence/v2/pkg/k8sapi"
 	"github.com/telepresenceio/telepresence/v2/pkg/proc"
 )
@@ -64,22 +63,25 @@ var QuitDaemonFuncs = []func(context.Context){
 
 func quitHostConnector(ctx context.Context) {
 	udCtx, err := ExistingHostDaemon(ctx, nil)
+	pid := "daemon"
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			dlog.Errorf(ctx, "unable to quit existing user daemon: %v", err)
+			progress.Write(ctx, progress.ErrorMessageEvent(pid, fmt.Sprintf("unable to quit existing user daemon: %v", err)))
 		}
 		return
 	}
 	ud := daemon.GetUserClient(udCtx)
+	progress.Write(ctx, progress.WorkingEvent(pid, "Quitting"))
 	_, _ = ud.Quit(ctx, &emptypb.Empty{})
 	_ = ud.Close()
-	_ = socket.WaitUntilVanishes("user daemon", socket.UserDaemonPath(ctx), 5*time.Second)
+	_ = socket.WaitUntilVanishes(pid, socket.UserDaemonPath(ctx), 5*time.Second)
 
 	// User daemon is responsible for killing the root daemon, but we kill it here too to cater for
 	// the fact that the user daemon might have been killed ungracefully.
 	if waitErr := socket.WaitUntilVanishes("root daemon", socket.RootDaemonPath(ctx), 5*time.Second); waitErr != nil {
 		quitRootDaemon(ctx)
 	}
+	progress.Write(ctx, progress.DoneEvent(pid, "Quit"))
 }
 
 func quitDockerDaemons(ctx context.Context) {
@@ -89,19 +91,64 @@ func quitDockerDaemons(ctx context.Context) {
 		return
 	}
 	for _, info := range infos {
+		id := info.DaemonID().Name
+		progress.Write(ctx, progress.WorkingEvent(id, "Quitting"))
 		udCtx, err := ExistingDaemon(ctx, info)
 		if err != nil {
-			dlog.Error(ctx, err)
+			progress.Write(ctx, progress.ErrorMessageEvent(id, err.Error()))
 			continue
 		}
 		ud := daemon.GetUserClient(udCtx)
 		_, _ = ud.Quit(ctx, &emptypb.Empty{})
 		_ = ud.Close()
+		progress.Write(ctx, progress.DoneEvent(id, "Quit"))
 	}
 	if err = daemon.WaitUntilAllVanishes(ctx, 5*time.Second); err != nil {
 		dlog.Error(ctx, err)
 		_ = daemon.DeleteAllInfos(ctx)
 	}
+}
+
+func EnsureUserDaemon(ctx context.Context, required bool) (rc context.Context, err error) {
+	cr := daemon.GetRequest(ctx)
+	daemonID, err := daemon.IdentifierFromFlags(ctx, cr.Name, cr.KubeFlags, cr.KubeconfigData, cr.Docker)
+	if err != nil {
+		return ctx, err
+	}
+
+	launched := false
+	defer func() {
+		if err == nil && required && !(proc.IsAdmin() || daemon.GetUserClient(rc).Containerized()) {
+			// The RootDaemon must be started if the UserDaemon was started
+			err = EnsureRootDaemonRunning(ctx)
+		}
+		if err != nil && !(errors.Is(err, ErrNoUserDaemon) && !required) {
+			err = progress.MaybeWriteError(ctx, daemonID.Name, err)
+		} else if launched {
+			progress.Write(ctx, progress.DoneEvent(daemonID.Name, "Launched Daemon"))
+		}
+	}()
+
+	if daemon.GetUserClient(ctx) != nil {
+		return ctx, nil
+	}
+	rc, launched, err = launchConnectorDaemon(ctx, daemonID, client.GetExe(ctx), required)
+	return rc, err
+}
+
+func EnsureSession(ctx context.Context, useLine string, required bool) (context.Context, error) {
+	if daemon.GetSession(ctx) != nil {
+		return ctx, nil
+	}
+
+	s, err := connectSession(ctx, useLine, daemon.GetRequest(ctx), required)
+	if err != nil {
+		return ctx, err
+	}
+	if s == nil {
+		return ctx, nil
+	}
+	return daemon.WithSession(ctx, s), nil
 }
 
 func ExistingDaemon(ctx context.Context, info *daemon.Info) (context.Context, error) {
@@ -138,27 +185,27 @@ func ExistingHostDaemon(ctx context.Context, id *daemon.Identifier) (context.Con
 
 // Quit shuts down all daemons.
 func Quit(ctx context.Context) {
-	stdout := output.Out(ctx)
-	ioutil.Print(stdout, "Telepresence Daemons quitting...")
+	progress.Start(ctx, "Quitting")
+	defer progress.Stop(ctx)
 	for _, quitFunc := range QuitDaemonFuncs {
 		quitFunc(ctx)
 	}
-	ioutil.Println(stdout, "done")
 }
 
 // Disconnect disconnects from a session in the user daemon.
 func Disconnect(ctx context.Context) {
 	if ud := daemon.GetUserClient(ctx); ud == nil {
-		ioutil.Println(output.Out(ctx), "Not connected")
+		progress.Write(ctx, progress.DoneEvent("daemon", "Not connected"))
 	} else {
+		id := ud.DaemonID().Name
 		_, err := ud.Disconnect(ctx, &emptypb.Empty{})
 		switch {
 		case err == nil:
-			ioutil.Println(output.Out(ctx), "Disconnected")
+			progress.Write(ctx, progress.DoneEvent(id, "Disconnected"))
 		case status.Code(err) == codes.Unavailable:
-			ioutil.Println(output.Out(ctx), "Not connected")
+			progress.Write(ctx, progress.DoneEvent(id, "Not connected"))
 		default:
-			ioutil.Printf(output.Err(ctx), "failed to disconnect: %v\n", err)
+			_ = progress.MaybeWriteError(ctx, id, fmt.Errorf("failed to disconnect: %v\n", err))
 		}
 	}
 }
@@ -200,15 +247,11 @@ func DiscoverDaemon(ctx context.Context, match *regexp.Regexp, daemonID *daemon.
 	return ExistingDaemon(ctx, info)
 }
 
-func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required bool) (context.Context, error) {
+func launchConnectorDaemon(ctx context.Context, daemonID *daemon.Identifier, connectorDaemon string, required bool) (context.Context, bool, error) {
 	cr := daemon.GetRequest(ctx)
-	daemonID, err := daemon.IdentifierFromFlags(ctx, cr.Name, cr.KubeFlags, cr.KubeconfigData, cr.Docker)
-	if err != nil {
-		return ctx, err
-	}
 
 	// Try dialing the host daemon using the well-known socket.
-	ctx, err = DiscoverDaemon(ctx, cr.Use, daemonID)
+	ctx, err := DiscoverDaemon(ctx, cr.Use, daemonID)
 	if err == nil {
 		ud := daemon.GetUserClient(ctx)
 		if ud.Containerized() {
@@ -216,25 +259,26 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 			cr.Docker = true
 		}
 		if ud.Containerized() == cr.Docker {
-			return ctx, nil
+			return ctx, false, nil
 		}
 		// A daemon running on the host does not fulfill a request for a containerized daemon. They can
 		// coexist though.
 		err = os.ErrNotExist
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return ctx, errcat.NoDaemonLogs.New(err)
+		return ctx, false, errcat.NoDaemonLogs.New(err)
 	}
 	if !required {
-		return ctx, ErrNoUserDaemon
+		return ctx, false, ErrNoUserDaemon
 	}
 
-	ioutil.Println(output.Info(ctx), "Launching Telepresence User Daemon")
+	progress.Write(ctx, progress.WorkingEvent(daemonID.Name, "Launching Daemon"))
+
 	if err = ensureAppUserCacheDirs(ctx); err != nil {
-		return ctx, err
+		return ctx, false, err
 	}
 	if err = ensureAppUserConfigDir(ctx); err != nil {
-		return ctx, err
+		return ctx, false, err
 	}
 
 	var conn *grpc.ClientConn
@@ -245,11 +289,11 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 		logFile := filepath.Join(logDir, "connector.log")
 		if _, err := os.Stat(logFile); err != nil {
 			if !os.IsNotExist(err) {
-				return ctx, err
+				return ctx, false, err
 			}
 			fh, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY, 0o666)
 			if err != nil {
-				return ctx, err
+				return ctx, false, err
 			}
 			_ = fh.Close()
 		}
@@ -260,14 +304,14 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 		var kc *client.Kubeconfig
 		ctx, kc, err = client.NewKubeconfig(ctx, cr.KubeFlags, cr.ManagerNamespace)
 		if err != nil {
-			return ctx, err
+			return ctx, false, err
 		}
 		var ki *kubernetes.Clientset
 		ki, err = kubernetes.NewForConfig(kc.RestConfig)
 		if err != nil {
-			return ctx, err
+			return ctx, false, err
 		}
-		conn, err = docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID)
+		conn, err = docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID, cr.NetworkAliases)
 	} else {
 		args := []string{connectorDaemon, "connector-foreground"}
 		if cr.UserDaemonProfilingPort > 0 {
@@ -288,7 +332,7 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 				Hostname:     cr.Hostname,
 			}, daemonID.InfoFileName())
 		if err != nil {
-			return ctx, err
+			return ctx, false, err
 		}
 		defer func() {
 			if err != nil {
@@ -299,14 +343,15 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 		}()
 
 		if err = proc.StartInBackground(false, args...); err != nil {
-			return ctx, errcat.NoDaemonLogs.Newf("failed to launch the connector service: %w", err)
+			return ctx, false, errcat.NoDaemonLogs.Newf("failed to launch the connector service: %w", err)
 		}
 		conn, err = socket.Dial(ctx, socket.UserDaemonPath(ctx), true)
 	}
 	if err != nil {
-		return ctx, err
+		return ctx, false, err
 	}
-	return newUserDaemon(ctx, conn, daemonID)
+	ctx, err = newUserDaemon(ctx, conn, daemonID)
+	return ctx, err == nil, err
 }
 
 // getConnectorVersion is the first call to the user daemon, so a backoff is used here to trap errors
@@ -344,123 +389,101 @@ func newUserDaemon(ctx context.Context, conn *grpc.ClientConn, daemonID *daemon.
 	return ctx, nil
 }
 
-func EnsureUserDaemon(ctx context.Context, required bool) (rc context.Context, err error) {
-	defer func() {
-		if err == nil && required && !(proc.IsAdmin() || daemon.GetUserClient(rc).Containerized()) {
-			// The RootDaemon must be started if the UserDaemon was started
-			err = EnsureRootDaemonRunning(ctx)
-		}
-	}()
-
-	if daemon.GetUserClient(ctx) != nil {
-		return ctx, nil
-	}
-	return launchConnectorDaemon(ctx, client.GetExe(ctx), required)
-}
-
 func ensureDaemonVersion(ctx context.Context) error {
 	// Ensure that the already running daemon has the correct version
 	return versionCheck(ctx, client.GetExe(ctx))
 }
 
-func EnsureSession(ctx context.Context, useLine string, required bool) (context.Context, error) {
-	if daemon.GetSession(ctx) != nil {
-		return ctx, nil
-	}
-	s, err := connectSession(ctx, useLine, daemon.GetUserClient(ctx), daemon.GetRequest(ctx), required)
+// warn if the version diff between cli and manager is > 3 or if there's an OSS/Enterprise mismatch.
+func warnMngrVersion(ctx context.Context, ci *connector.ConnectInfo) error {
+	mv := ci.ManagerVersion
+
+	// remove leading v from semver
+	mSemver, err := semver.Parse(strings.TrimPrefix(mv.Version, "v"))
 	if err != nil {
-		return ctx, err
+		return err
 	}
-	if s == nil {
-		return ctx, nil
+
+	cliSemver := client.Semver()
+
+	var diff uint64
+	if cliSemver.Minor > mSemver.Minor {
+		diff = cliSemver.Minor - mSemver.Minor
+	} else {
+		diff = mSemver.Minor - cliSemver.Minor
 	}
-	return daemon.WithSession(ctx, s), nil
+
+	maxDiff := uint64(3)
+	if diff > maxDiff {
+		progress.TailMsgf(ctx,
+			"The Traffic Manager version (%s) is more than %v minor versions diff from client version (%s), please consider upgrading.\n",
+			mv.Version, maxDiff, client.Version())
+	}
+
+	cv := ci.Version
+	if strings.HasPrefix(cv.Name, "OSS ") && !strings.HasPrefix(mv.Name, "OSS ") {
+		progress.TailMsgf(ctx,
+			"You are using the OSS client %s to connect to an enterprise traffic manager %s. Please consider installing an\n"+
+				"enterprise client from getambassador.io, or use \"telepresence helm install\" to install an OSS traffic-manager\n",
+			cv.Version,
+			mv.Version)
+	}
+	return nil
 }
 
-func connectSession(ctx context.Context, useLine string, userD daemon.UserClient, request *daemon.Request, required bool) (*daemon.Session, error) {
-	var ci *connector.ConnectInfo
-	var err error
-	if userD.Containerized() {
-		patcher.AnnotateConnectRequest(&request.ConnectRequest, docker.TpCache, userD.DaemonID().KubeContext)
-	}
-	session := func(ci *connector.ConnectInfo, started bool) *daemon.Session {
-		// Update the request from the connect info.
-		request.KubeFlags = ci.KubeFlags
-		request.ManagerNamespace = ci.ManagerNamespace
-		request.Name = ci.ConnectionName
-		userD.SetDaemonID(&daemon.Identifier{
-			Name:          ci.ConnectionName,
-			KubeContext:   ci.ClusterContext,
-			Namespace:     ci.Namespace,
-			Containerized: userD.Containerized(),
-		})
-		return &daemon.Session{
-			UserClient: userD,
-			Info:       ci,
-			Started:    started,
-		}
-	}
-
-	// warn if the version diff between cli and manager is > 3 or if there's an OSS/Enterprise mismatch.
-	warnMngrVersion := func(ci *connector.ConnectInfo) error {
-		mv := ci.ManagerVersion
-
-		// remove leading v from semver
-		mSemver, err := semver.Parse(strings.TrimPrefix(mv.Version, "v"))
+func connectResult(ctx context.Context, ci *connector.ConnectInfo, withProgress bool) (*daemon.Session, error) {
+	var msg string
+	cat := errcat.Unknown
+	started := false
+	switch ci.Error {
+	case connector.ConnectInfo_UNSPECIFIED:
+		err := warnMngrVersion(ctx, ci)
 		if err != nil {
-			return err
+			dlog.Error(ctx, err)
 		}
-
-		cliSemver := client.Semver()
-
-		var diff uint64
-		if cliSemver.Minor > mSemver.Minor {
-			diff = cliSemver.Minor - mSemver.Minor
-		} else {
-			diff = mSemver.Minor - cliSemver.Minor
+		started = true
+		fallthrough
+	case connector.ConnectInfo_ALREADY_CONNECTED:
+		if withProgress {
+			msg := fmt.Sprintf("Connected to context %s, namespace %s (%s)", ci.ClusterContext, ci.Namespace, ci.ClusterServer)
+			progress.Write(ctx, progress.DoneEvent(ci.ConnectionName, msg))
 		}
-
-		maxDiff := uint64(3)
-		if diff > maxDiff {
-			ioutil.Printf(output.Info(ctx),
-				"The Traffic Manager version (%s) is more than %v minor versions diff from client version (%s), please consider upgrading.\n",
-				mv.Version, maxDiff, client.Version())
+		return &daemon.Session{Info: ci, Started: started}, nil
+	case connector.ConnectInfo_MUST_RESTART:
+		msg = "Cluster configuration changed, please quit telepresence and reconnect"
+	default:
+		msg = ci.ErrorText
+		if ci.ErrorCategory != 0 {
+			cat = errcat.Category(ci.ErrorCategory)
 		}
+	}
+	return nil, &ConnectError{error: cat.Newf("connector.Connect: %s", msg), code: ci.Error}
+}
 
-		cv := ci.Version
-		if strings.HasPrefix(cv.Name, "OSS ") && !strings.HasPrefix(mv.Name, "OSS ") {
-			ioutil.Printf(output.Info(ctx),
-				"You are using the OSS client %s to connect to an enterprise traffic manager %s. Please consider installing an\n"+
-					"enterprise client from getambassador.io, or use \"telepresence helm install\" to install an OSS traffic-manager\n",
-				cv.Version,
-				mv.Version)
-		}
-		return nil
+func connectSession(ctx context.Context, useLine string, request *daemon.Request, required bool) (session *daemon.Session, err error) {
+	userD := daemon.GetUserClient(ctx)
+	if userD.Containerized() {
+		patcher.AnnotateConnectRequest(request.ConnectRequest, docker.TpCache, userD.DaemonID().KubeContext)
 	}
 
-	connectResult := func(ci *connector.ConnectInfo) (*daemon.Session, error) {
-		var msg string
-		cat := errcat.Unknown
-		switch ci.Error {
-		case connector.ConnectInfo_UNSPECIFIED:
-			ioutil.Printf(output.Info(ctx), "Connected to context %s, namespace %s (%s)\n", ci.ClusterContext, ci.Namespace, ci.ClusterServer)
-			err := warnMngrVersion(ci)
-			if err != nil {
-				dlog.Error(ctx, err)
-			}
-			return session(ci, true), nil
-		case connector.ConnectInfo_ALREADY_CONNECTED:
-			return session(ci, false), nil
-		case connector.ConnectInfo_MUST_RESTART:
-			msg = "Cluster configuration changed, please quit telepresence and reconnect"
-		default:
-			msg = ci.ErrorText
-			if ci.ErrorCategory != 0 {
-				cat = errcat.Category(ci.ErrorCategory)
-			}
+	var ci *connector.ConnectInfo
+	defer func() {
+		if ci != nil {
+			request.KubeFlags = ci.KubeFlags
+			request.ManagerNamespace = ci.ManagerNamespace
+			request.Name = ci.ConnectionName
+
+			userD.SetDaemonID(&daemon.Identifier{
+				Name:          ci.ConnectionName,
+				KubeContext:   ci.ClusterContext,
+				Namespace:     ci.Namespace,
+				Containerized: userD.Containerized(),
+			})
 		}
-		return nil, &ConnectError{error: cat.Newf("connector.Connect: %s", msg), code: ci.Error}
-	}
+		if session != nil {
+			session.UserClient = userD
+		}
+	}()
 
 	if request.Implicit {
 		// implicit calls use the current Status instead of passing flags and mapped namespaces.
@@ -468,12 +491,12 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 			return nil, err
 		}
 		if ci.Error != connector.ConnectInfo_DISCONNECTED {
-			return connectResult(ci)
+			return connectResult(ctx, ci, false)
 		}
 		if required {
-			ioutil.Printf(output.Info(ctx),
+			progress.TailMsgf(ctx,
 				`Warning: You are executing the %q command without a preceding "telepresence connect", causing an implicit `+
-					"connect to take place. The implicit connect behavior is deprecated and will be removed in a future release.\n",
+					"connect to take place. The implicit connect behavior is deprecated and will be removed in a future release.",
 				useLine)
 		}
 	}
@@ -482,8 +505,8 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 		return nil, nil
 	}
 
+	daemonID := userD.DaemonID()
 	if !userD.Containerized() {
-		daemonID := userD.DaemonID()
 		dlog.Debugf(ctx, "Creating daemon info file %s (runs on host)", daemonID.Name)
 		err = daemon.SaveInfo(ctx,
 			&daemon.Info{
@@ -498,7 +521,8 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 			return nil, errcat.NoDaemonLogs.New(err)
 		}
 	}
-	if ci, err = userD.Connect(ctx, &request.ConnectRequest); err != nil {
+	progress.Write(ctx, progress.WorkingEvent(daemonID.Name, fmt.Sprintf("Connecting to context %s, namespace %s", daemonID.KubeContext, daemonID.Namespace)))
+	if ci, err = userD.Connect(ctx, request.ConnectRequest); err != nil {
 		if !userD.Containerized() {
 			file := userD.DaemonID().InfoFileName()
 			dlog.Debugf(ctx, "Deleting daemon info %s due to connect error: %v", file, err)
@@ -506,5 +530,5 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 		}
 		return nil, err
 	}
-	return connectResult(ci)
+	return connectResult(ctx, ci, true)
 }

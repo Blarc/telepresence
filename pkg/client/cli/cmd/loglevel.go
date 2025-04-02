@@ -14,6 +14,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ann"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 )
 
@@ -78,6 +79,7 @@ func (lls *logLevelCommand) setTempLogLevel(cmd *cobra.Command, args []string) e
 	if err := connect.InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	ctx := cmd.Context()
 	userD := daemon.GetUserClient(ctx)
 	_, err := userD.SetLogLevel(ctx, rq)

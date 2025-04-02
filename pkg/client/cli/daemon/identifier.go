@@ -47,7 +47,7 @@ func (id *Identifier) InfoFileName() string {
 }
 
 func (id *Identifier) ContainerName() string {
-	return "tp-" + id.String()
+	return id.String()
 }
 
 // IdentifierFromFlags returns a unique name created from the name of the current context

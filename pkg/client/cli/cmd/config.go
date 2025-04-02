@@ -9,6 +9,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 )
 
 func configCmd() *cobra.Command {
@@ -38,6 +39,10 @@ func configView() *cobra.Command {
 }
 
 func runConfigView(cmd *cobra.Command, _ []string) error {
+	defer func() {
+		progress.Stop(cmd.Context())
+	}()
+
 	var cfg client.SessionConfig
 	clientOnly, _ := cmd.Flags().GetBool(clientOnlyFlag)
 	if !clientOnly {

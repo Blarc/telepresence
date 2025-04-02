@@ -46,8 +46,8 @@ import (
 const (
 	telepresenceImage = "telepresence"
 	TpCache           = "/root/.cache/telepresence"
-	dockerTpConfig    = "/root/.config/telepresence"
-	dockerTpLog       = "/root/.cache/telepresence/logs"
+	DockerTpConfig    = "/root/.config/telepresence"
+	DockerTpLog       = "/root/.cache/telepresence/logs"
 )
 
 var ClientImageName = telepresenceImage //nolint:gochecknoglobals // extension point
@@ -65,7 +65,7 @@ func ClientImage(ctx context.Context) string {
 }
 
 // DaemonOptions returns the options necessary to pass to a docker run when starting a daemon container.
-func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier) ([]string, *net.TCPAddr, error) {
+func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier, aliases []string) ([]string, *net.TCPAddr, error) {
 	as, err := client.FreePortsTCP(1)
 	if err != nil {
 		return nil, nil, err
@@ -80,9 +80,12 @@ func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier) ([]string, 
 		"-e", fmt.Sprintf("TELEPRESENCE_UID=%d", os.Getuid()),
 		"-e", fmt.Sprintf("TELEPRESENCE_GID=%d", os.Getgid()),
 		"-p", fmt.Sprintf("%s:%d", addr, addr.Port),
-		"-v", fmt.Sprintf("%s:%s:ro", filelocation.AppUserConfigDir(ctx), dockerTpConfig),
+		"-v", fmt.Sprintf("%s:%s:ro", filelocation.AppUserConfigDir(ctx), DockerTpConfig),
 		"-v", fmt.Sprintf("%s:%s", filelocation.AppUserCacheDir(ctx), TpCache),
-		"-v", fmt.Sprintf("%s:%s", filelocation.AppUserLogDir(ctx), dockerTpLog),
+		"-v", fmt.Sprintf("%s:%s", filelocation.AppUserLogDir(ctx), DockerTpLog),
+	}
+	for _, alias := range aliases {
+		opts = append(opts, "--network-alias", alias)
 	}
 	cr := daemon.GetRequest(ctx)
 	for _, ep := range cr.ExposedPorts {
@@ -251,7 +254,7 @@ func enableK8SAuthenticator(ctx context.Context, daemonID *daemon.Identifier) er
 	if err != nil {
 		return err
 	}
-	patcher.AnnotateConnectRequest(&cr.ConnectRequest, TpCache, config.CurrentContext)
+	patcher.AnnotateConnectRequest(cr.ConnectRequest, TpCache, config.CurrentContext)
 	return err
 }
 
@@ -334,9 +337,9 @@ func handleLocalK8s(ctx context.Context, daemonID *daemon.Identifier, config *ap
 // LaunchDaemon ensures that the image returned by ClientImage exists by calling PullImage. It then uses the
 // options DaemonOptions and DaemonArgs to start the image, and finally connectDaemon to connect to it. A
 // successful start yields a cache.Info entry in the cache.
-func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier) (conn *grpc.ClientConn, err error) {
+func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier, networkAliases []string) (conn *grpc.ClientConn, err error) {
 	image := ClientImage(ctx)
-	if err = PullImage(ctx, image); err != nil {
+	if err = PullImage(ctx, daemonID.Name, image); err != nil {
 		return nil, err
 	}
 
@@ -349,7 +352,7 @@ func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier) (conn *grpc.
 	if err = EnsureNetwork(ctx, "telepresence"); err != nil {
 		return nil, err
 	}
-	opts, addr, err := DaemonOptions(ctx, daemonID)
+	opts, addr, err := DaemonOptions(ctx, daemonID, networkAliases)
 	if err != nil {
 		return nil, errcat.NoDaemonLogs.New(err)
 	}

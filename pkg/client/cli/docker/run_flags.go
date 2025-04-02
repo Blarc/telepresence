@@ -6,12 +6,13 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
 	"github.com/datawire/dlib/dlog"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
-	docker2 "github.com/telepresenceio/telepresence/v2/pkg/client/docker"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 )
 
 type Volume struct {
@@ -38,6 +39,11 @@ type Mount struct {
 	Source  string
 	Target  string
 	Options string
+}
+
+type Network struct {
+	Name    string
+	Aliases []string
 }
 
 func (m *Mount) String() string {
@@ -180,13 +186,13 @@ func ParseRunFlags(args []string) (*RunFlags, []string, error) {
 	return &f, args, nil
 }
 
-func ConnectNetworksToDaemon(ctx context.Context, networks []string, daemonName string) (context.CancelFunc, error) {
+func ConnectNetworksToDaemon(ctx context.Context, daemonName string, networks []Network) (context.CancelFunc, error) {
 	cancel := func() {}
 	if len(networks) == 0 {
 		return cancel, nil
 	}
 
-	cli, err := docker2.GetClient(ctx)
+	cli, err := docker.GetClient(ctx)
 	if err != nil {
 		return cancel, err
 	}
@@ -196,12 +202,12 @@ func ConnectNetworksToDaemon(ctx context.Context, networks []string, daemonName 
 		disconnectDaemons(ctx, cli, ds, daemonName)
 	}
 	for _, n := range networks {
-		connected, err := connectDaemon(ctx, cli, n, daemonName)
+		connected, err := connectDaemon(ctx, cli, daemonName, n)
 		if err != nil {
 			return cancel, err
 		}
 		if connected {
-			ds = append(ds, n)
+			ds = append(ds, n.Name)
 		}
 	}
 	return cancel, nil
@@ -209,13 +215,19 @@ func ConnectNetworksToDaemon(ctx context.Context, networks []string, daemonName 
 
 // connectDaemon connects the given network to the containerized daemon. It will
 // return false if the daemon already had this network attached.
-func connectDaemon(ctx context.Context, cli *client.Client, network, daemonName string) (bool, error) {
-	dlog.Debugf(ctx, "Connecting network %s to container %s", network, daemonName)
-	if err := cli.NetworkConnect(ctx, network, daemonName, nil); err != nil {
+func connectDaemon(ctx context.Context, cli *client.Client, daemonName string, n Network) (bool, error) {
+	var es *network.EndpointSettings
+	if len(n.Aliases) > 0 {
+		es = &network.EndpointSettings{
+			Aliases: n.Aliases,
+		}
+	}
+	dlog.Debugf(ctx, "Connecting network %s to container %s with settings %+v", n.Name, daemonName, es)
+	if err := cli.NetworkConnect(ctx, n.Name, daemonName, es); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to connect network %s to container %s: %v", network, daemonName, err)
+		return false, fmt.Errorf("failed to connect network %s to container %s: %v", n.Name, daemonName, err)
 	}
 	return true, nil
 }

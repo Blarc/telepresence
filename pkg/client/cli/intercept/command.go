@@ -19,9 +19,11 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/env"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/global"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ingest"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/mount"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 	"github.com/telepresenceio/telepresence/v2/pkg/k8sapi"
@@ -51,7 +53,6 @@ type Command struct {
 	WaitMessage     string // Message printed when a containerized intercept handler is started and waiting for an interrupt
 	FormattedOutput bool
 	DetailedOutput  bool
-	Silent          bool
 	NoDefaultPort   bool
 }
 
@@ -167,6 +168,10 @@ func (c *Command) Validate(cmd *cobra.Command, positional []string) error {
 	if c.Wiretap {
 		c.MountFlags.ReadOnly = true
 	}
+	if c.FormattedOutput || c.EnvFlags.File == "-" {
+		// Can't mix JSON or env output on stdout with progress monitor.
+		_ = cmd.Flag(global.FlagProgress).Value.Set("quiet")
+	}
 	return c.DockerFlags.Validate(c.Cmdline)
 }
 
@@ -221,6 +226,7 @@ func (c *Command) validatedRun(cmd *cobra.Command) error {
 	if err := connect.InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	ctx := dos.WithStdio(cmd.Context(), cmd)
 	_, err := NewState(c, c.MountFlags.ValidateConnected(ctx)).Run(ctx)
 	return err

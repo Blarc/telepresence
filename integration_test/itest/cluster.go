@@ -818,6 +818,7 @@ func TelepresenceCmd(ctx context.Context, args ...string) *dexec.Cmd {
 		}
 		args = append(args, rest...)
 	}
+	args = append([]string{"--progress", "plain"}, args...)
 	cmd := Command(ctx, GetExecutable(ctx), args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -846,8 +847,7 @@ func TelepresenceQuitOk(ctx context.Context) {
 // AssertQuitOutput asserts that the stdout contains the correct output from a telepresence quit command.
 func AssertQuitOutput(ctx context.Context, stdout string) {
 	t := getT(ctx)
-	assert.True(t, strings.Contains(stdout, "Telepresence Daemons quitting...done") ||
-		strings.Contains(stdout, "Telepresence Daemons have already quit"))
+	assert.True(t, stdout == "" || strings.Contains(stdout, "Quit"))
 	if t.Failed() {
 		t.Logf("Quit output was %q", stdout)
 	}

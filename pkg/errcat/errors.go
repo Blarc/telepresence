@@ -3,8 +3,10 @@ package errcat
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/telepresenceio/telepresence/rpc/v2/common"
+	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 )
 
 // The Category is used for categorizing errors so that we can know when
@@ -21,6 +23,7 @@ const (
 	User         // User made an error
 	Config       // Errors in config.yml, extensions, or kubeconfig
 	NoDaemonLogs // Other error generated in the CLI process, so no use pointing the user to logs
+	Silent       // Don't print error on exit, it has already been conveyed to the user
 	Unknown      // Something else. Consult the logs
 )
 
@@ -32,6 +35,8 @@ func (c Category) New(untypedErr any) error {
 	switch untypedErr := untypedErr.(type) {
 	case nil:
 		return nil
+	case *categorized:
+		return untypedErr
 	case error:
 		err = untypedErr
 	case string:
@@ -46,6 +51,15 @@ func (c Category) New(untypedErr any) error {
 // error is created using fmt.Errorf() so using '%w' is relevant for error arguments.
 func (c Category) Newf(format string, a ...any) error {
 	return &categorized{error: fmt.Errorf(format, a...), category: c}
+}
+
+// Print prints error on dos.Stderr(ctx) unless it is nil or Silent.
+func Print(err error) {
+	switch GetCategory(err) {
+	case OK, Silent:
+	default:
+		ioutil.Println(os.Stderr, err.Error())
+	}
 }
 
 // Unwrap this categorized error.

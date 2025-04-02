@@ -13,22 +13,18 @@ import (
 	rootDaemon "github.com/telepresenceio/telepresence/rpc/v2/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
-	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/socket"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 	"github.com/telepresenceio/telepresence/v2/pkg/filelocation"
-	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 	"github.com/telepresenceio/telepresence/v2/pkg/proc"
 )
 
-func launchDaemon(ctx context.Context, cr *daemon.Request) error {
-	ioutil.Println(output.Info(ctx), "Launching Telepresence Root Daemon")
-
+func launchDaemon(ctx context.Context, cr *daemon.Request) (err error) {
 	// Ensure that the logfile is present before the daemon starts so that it isn't created with
 	// root permissions.
 	logDir := filelocation.AppUserLogDir(ctx)
 	logFile := filepath.Join(logDir, "daemon.log")
-	if _, err := os.Stat(logFile); err != nil {
+	if _, err = os.Stat(logFile); err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/telepresenceio/telepresence/rpc/v2/manager"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/mount"
@@ -84,6 +85,12 @@ func NewInfo(ctx context.Context, ii *manager.InterceptInfo, ro bool, mountError
 		info.ServicePortID = info.PortID
 	}
 	return info
+}
+
+func (ii *Info) String() string {
+	sb := strings.Builder{}
+	_, _ = ii.WriteTo(&sb)
+	return sb.String()
 }
 
 func (ii *Info) WriteTo(w io.Writer) (int64, error) {

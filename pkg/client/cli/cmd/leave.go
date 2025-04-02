@@ -16,6 +16,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/intercept"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 )
@@ -34,6 +35,7 @@ func leaveCmd() *cobra.Command {
 			if err := connect.InitCommand(cmd); err != nil {
 				return err
 			}
+			defer progress.Stop(cmd.Context())
 			return disengage(cmd.Context(), strings.TrimSpace(args[0]), containerName)
 		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

@@ -16,6 +16,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/intercept"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 )
@@ -99,6 +100,7 @@ func (s *listCommand) list(cmd *cobra.Command, _ []string) error {
 	if err := connect.InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	stdout := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	userD := daemon.GetUserClient(ctx)

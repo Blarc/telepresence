@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -15,10 +16,9 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	cliDocker "github.com/telepresenceio/telepresence/v2/pkg/client/cli/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
-	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
-	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 	"github.com/telepresenceio/telepresence/v2/pkg/proc"
 	"github.com/telepresenceio/telepresence/v2/pkg/types"
 )
@@ -80,6 +80,7 @@ func (s *state) RunAndLeave() bool {
 }
 
 func (s *state) Run(ctx context.Context) error {
+	progress.Start(ctx, "Initializing")
 	var err error
 	if !s.RunAndLeave() {
 		return client.WithEnsuredState(ctx, s.create, nil, nil)
@@ -94,7 +95,7 @@ func (s *state) Run(ctx context.Context) error {
 			defaultContainerName = fmt.Sprintf("ingest-%s", s.WorkloadName)
 		}
 		ctx = docker.EnableClient(ctx)
-		err = s.DockerFlags.PullOrBuildImage(ctx)
+		err = s.DockerFlags.PullOrBuildImage(ctx, "Handler")
 		if err != nil {
 			return err
 		}
@@ -122,15 +123,22 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 		}()
 	}
 
+	progress.Start(ctx, "Creating")
+	defer progress.Stop(ctx)
+
 	// Submit the request
+	prId := ud.DaemonID().Name
+	progress.Write(ctx, progress.WorkingEvent(prId, types.EngagementTypeIngest.Working()))
 	ii, err := ud.Ingest(ctx, ir)
 	if err != nil {
 		switch grpcStatus.Code(err) {
 		case grpcCodes.AlreadyExists, grpcCodes.NotFound, grpcCodes.Unimplemented, grpcCodes.FailedPrecondition:
-			return false, errcat.User.New(grpcStatus.Convert(err).Message())
+			err = errors.New(grpcStatus.Convert(err).Message())
 		}
-		return false, fmt.Errorf("ingest: %w", err)
+		return false, progress.MaybeWriteError(ctx, prId, err)
 	}
+	progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, types.EngagementTypeIngest.WorkDone()))
+
 	if s.MountFlags.Enabled {
 		if ir.LocalMountPort != 0 {
 			ii.PodIp = "127.0.0.1"
@@ -143,10 +151,7 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 	}
 
 	s.info = ii
-	silent := s.EnvFlags.File == "-"
-	if !(silent || s.FormattedOutput) {
-		ioutil.Printf(dos.Stdout(ctx), "Using %s %s\n", ii.WorkloadKind, ii.Workload)
-	}
+	progress.TailMsgf(ctx, "Using %s %s\n", ii.WorkloadKind, ii.Workload)
 
 	env := s.info.Environment
 	if env == nil {
@@ -154,26 +159,23 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 		s.info.Environment = env
 	}
 	env["TELEPRESENCE_ROOT"] = s.info.ClientMountPoint
-	if err = s.EnvFlags.PerhapsWrite(env); err != nil {
+	if err = s.EnvFlags.MaybeWrite(env); err != nil {
 		return true, err
 	}
 	s.ContainerName = env["TELEPRESENCE_CONTAINER"]
-	if !silent {
-		info := NewInfo(ctx, ii, nil)
-		if s.FormattedOutput {
-			output.Object(ctx, info, true)
-		} else {
-			out := dos.Stdout(ctx)
-			_, _ = info.WriteTo(out)
-			_, _ = fmt.Fprintln(out)
-		}
+	info := NewInfo(ctx, ii, nil)
+	if s.FormattedOutput {
+		output.Object(ctx, info, true)
+	} else {
+		progress.TailMsgf(ctx, s.info.String())
 	}
 	return true, nil
 }
 
 func (s *state) leave(ctx context.Context) error {
-	dlog.Debugf(ctx, "Leaving ingest %s/%s", s.WorkloadName, s.ContainerName)
-	_, err := daemon.GetUserClient(ctx).LeaveIngest(ctx, &rpc.IngestIdentifier{
+	ud := daemon.GetUserClient(ctx)
+	progress.Write(ctx, progress.WorkingEvent(ud.DaemonID().Name, "Ending ingest"))
+	_, err := ud.LeaveIngest(ctx, &rpc.IngestIdentifier{
 		WorkloadName:  s.WorkloadName,
 		ContainerName: s.ContainerName,
 	})
@@ -182,13 +184,18 @@ func (s *state) leave(ctx context.Context) error {
 		err = nil
 	}
 	if err != nil {
-		dlog.Errorf(ctx, "Leaving intercept ended with error %v", err)
+		err = progress.MaybeWriteError(ctx, ud.DaemonID().Name, err)
+	} else {
+		progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, "Ended ingest"))
 	}
 	return err
 }
 
 func (s *state) runCommand(ctx context.Context) error {
 	// start the interceptor process
+	progress.Start(ctx, "Starting")
+	defer progress.Stop(ctx)
+
 	if !s.DockerFlags.Run {
 		env := s.info.Environment
 		cmd, err := proc.Start(ctx, env, s.Cmdline[0], s.Cmdline[1:]...)

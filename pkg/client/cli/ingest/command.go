@@ -12,6 +12,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/env"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/mount"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 )
@@ -68,6 +69,7 @@ func (c *Command) Run(cmd *cobra.Command, positional []string) error {
 	if err := connect.InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	ctx := dos.WithStdio(cmd.Context(), cmd)
 	return NewState(c, c.MountFlags.ValidateConnected(ctx)).Run(ctx)
 }

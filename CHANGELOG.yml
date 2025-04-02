@@ -28,6 +28,13 @@ items:
     date: (TBD)
     notes:
       - type: feature
+        title: Support for Docker Compose
+        body: >-
+          Telepresence now supports integration with Docker Compose. It connects to and interacts with cluster resources
+          by utilizing `x-<engagement>` extensions within a Docker Compose specification. These extensions configure
+          your local services to effectively act as handlers for Telepresence connections, providing them with the
+          necessary access to the traffic, volumes, and environment of the engaged container.
+      - type: feature
         title: New telepresence wiretap command
         body: >-
           The new `telepresence wiretap` command introduces a read-only form of an `intercept` where the original
@@ -36,6 +43,16 @@ items:
           Similar to an `ingest`, a `wiretap` will always enforce read-only status on all volume mounts, and since that
           makes the `wiretap` completely read-only, there's no limit to how many simultaneous wiretaps that can be
           served. In fact, a `wiretap` and an `intercept` on the same port can run simultaneously.
+      - type: feature
+        title: Human friendly progress reporting
+        body: >-
+          Telepresence now uses a progress reporter that is very similar to the one used by Docker compose. The
+          implementation is a variation of that reporter's source code, so big thanks to the Docker compose CLI authors
+          for making it available as OSS.
+          
+          A new global `--progress <progress>` flag was added. It defaults to "auto" which means that the style is
+          chosen depending on whether the command runs from a tty type terminal. Other possible values are "plain",
+          "quiet", and "json". `--progress quiet` is implied when formatted output is chosen using `--output json|yaml`.
   - version: 2.22.3
     date: 2025-04-08
     notes:

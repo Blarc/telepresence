@@ -78,9 +78,7 @@ Traffic Manager installed successfully
 Let telepresence connect:
 ```console
 $ telepresence connect
-Launching Telepresence User Daemon
-Launching Telepresence Root Daemon
-Connected to context rancher-desktop, namespace default (https://127.0.0.1:6443)
+ ✔ Connected to context rancher-desktop, namespace default (https://127.0.0.1:6443)       2.4s 
 ```
 
 A session is now active and outbound connections will be routed to the cluster. I.e. your laptop is logically "inside"
@@ -124,6 +122,7 @@ Add an intercept for the hello deployment on port 9000. Here, we also start a se
 
 ```console
 $ telepresence intercept hello --port 9000 -- python3 -m http.server 9000
+ ✔ Intercepted                                                                              2.1s 
 Using Deployment hello
    Intercept name    : hello
    State             : ACTIVE
@@ -167,7 +166,7 @@ End the service with `<ctrl>-C` and then try `curl hello` or `http://hello` agai
 Now end the session too. Your desktop no longer has access to the cluster internals.
 ```console
 $ telepresence quit
-Disconnected
+ ✔ Disconnected                                                                           0.1s 
 $ curl hello
 curl: (6) Could not resolve host: hello
 ```
@@ -178,7 +177,7 @@ quit command.
 
 ```console
 $ telepresence quit -s
-Telepresence Daemons quitting...done
+ ✔ Quit                                                                                   0.3s 
 ```
 
 ### What got installed in the cluster?

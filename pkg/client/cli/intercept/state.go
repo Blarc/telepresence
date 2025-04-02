@@ -19,11 +19,10 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	cliDocker "github.com/telepresenceio/telepresence/v2/pkg/client/cli/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/scout"
-	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
-	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 	"github.com/telepresenceio/telepresence/v2/pkg/proc"
 	"github.com/telepresenceio/telepresence/v2/pkg/types"
 )
@@ -87,6 +86,14 @@ func (s *state) CreateRequest(ctx context.Context) (*connector.CreateInterceptRe
 	spec.TargetHost = "127.0.0.1"
 	spec.NoDefaultPort = s.NoDefaultPort
 
+	for _, toPod := range s.ToPod {
+		pp, err := types.NewPortAndProto(toPod)
+		if err != nil {
+			return nil, err
+		}
+		spec.LocalPorts = append(spec.LocalPorts, pp.String())
+	}
+
 	ud := daemon.GetUserClient(ctx)
 
 	// Parse port into spec based on how it's formatted
@@ -121,14 +128,6 @@ func (s *state) CreateRequest(ctx context.Context) (*connector.CreateInterceptRe
 		return nil, fmt.Errorf("--address %s is not a valid IP address", s.Address)
 	}
 	spec.TargetHost = s.Address
-
-	for _, toPod := range s.ToPod {
-		pp, err := types.NewPortAndProto(toPod)
-		if err != nil {
-			return nil, err
-		}
-		spec.LocalPorts = append(spec.LocalPorts, pp.String())
-	}
 	return ir, nil
 }
 
@@ -141,6 +140,7 @@ func (s *state) RunAndLeave() bool {
 }
 
 func (s *state) Run(ctx context.Context) (*Info, error) {
+	progress.Start(ctx, "Initializing")
 	ctx = scout.NewReporter(ctx, "cli")
 	scout.Start(ctx)
 	defer scout.Close(ctx)
@@ -157,7 +157,7 @@ func (s *state) Run(ctx context.Context) (*Info, error) {
 	// start intercept, run command, then leave the intercept
 	if s.DockerFlags.Run {
 		ctx = docker.EnableClient(ctx)
-		err = s.DockerFlags.PullOrBuildImage(ctx)
+		err = s.DockerFlags.PullOrBuildImage(ctx, "Handler")
 		if err != nil {
 			return nil, err
 		}
@@ -190,6 +190,9 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 		return false, err
 	}
 
+	progress.Start(ctx, "Creating")
+	defer progress.Stop(ctx)
+
 	what := s.what()
 
 	// Add whatever metadata we already have to scout
@@ -213,17 +216,15 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 	}()
 
 	// Submit the request
+	egType := types.EngagementTypeFromSpec(ir.Spec)
+	progress.Write(ctx, progress.WorkingEvent(ud.DaemonID().Name, egType.Working()))
 	r, err := ud.CreateIntercept(ctx, ir)
 	if err = Result(r, err); err != nil {
-		return false, fmt.Errorf("connector.CreateIntercept: %w", err)
+		return false, progress.MaybeWriteError(ctx, ud.DaemonID().Name, fmt.Errorf("connector.CreateIntercept: %w", err))
 	}
-	if s.EnvFlags.File == "-" {
-		s.Silent = true
-	}
+	progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, egType.WorkDone()))
 	detailedOutput := s.DetailedOutput && s.FormattedOutput
-	if !s.Silent && !detailedOutput {
-		ioutil.Printf(dos.Stdout(ctx), "Using %s %s\n", r.WorkloadKind, s.AgentName)
-	}
+	progress.TailMsgf(ctx, "Using %s %s", r.WorkloadKind, s.AgentName)
 	var intercept *manager.InterceptInfo
 
 	// Add metadata to scout from InterceptResult
@@ -244,7 +245,7 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 	}
 	s.env["TELEPRESENCE_INTERCEPT_ID"] = intercept.Id
 	s.env["TELEPRESENCE_ROOT"] = intercept.ClientMountPoint
-	if err = s.EnvFlags.PerhapsWrite(s.env); err != nil {
+	if err = s.EnvFlags.MaybeWrite(s.env); err != nil {
 		return true, err
 	}
 
@@ -260,19 +261,16 @@ func (s *state) create(ctx context.Context) (acquired bool, err error) {
 	}
 
 	s.info = NewInfo(ctx, intercept, s.MountFlags.ReadOnly, s.mountError)
-	if !s.Silent {
-		if detailedOutput {
-			output.Object(ctx, s.info, true)
-		} else {
-			out := dos.Stdout(ctx)
-			_, _ = s.info.WriteTo(out)
-			_, _ = fmt.Fprintln(out)
-		}
+	if detailedOutput {
+		output.Object(ctx, s.info, true)
+	} else {
+		progress.TailMsgf(ctx, s.info.String())
 	}
 	return true, nil
 }
 
 func (s *state) leave(ctx context.Context) error {
+	progress.Start(ctx, "Leaving")
 	m := s.info.Mount
 	if m != nil && m.LocalDir != "" {
 		defer func() {
@@ -283,20 +281,26 @@ func (s *state) leave(ctx context.Context) error {
 		}()
 	}
 	n := strings.TrimSpace(s.Name())
-	dlog.Debugf(ctx, "Leaving %s %s", s.what(), n)
-	r, err := daemon.GetUserClient(ctx).RemoveIntercept(ctx, &manager.RemoveInterceptRequest2{Name: n})
+	ud := daemon.GetUserClient(ctx)
+	progress.Write(ctx, progress.WorkingEvent(ud.DaemonID().Name, fmt.Sprintf("Ending %s", s.what())))
+	r, err := ud.RemoveIntercept(ctx, &manager.RemoveInterceptRequest2{Name: n})
 	if err != nil && grpcStatus.Code(err) == grpcCodes.Canceled {
 		// Deactivation was caused by a disconnect
 		err = nil
 	}
 	if err != nil {
-		dlog.Errorf(ctx, "Leaving intercept ended with error %v", err)
+		err = progress.MaybeWriteError(ctx, ud.DaemonID().Name, err)
+	} else {
+		progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, fmt.Sprintf("Ended %s", s.what())))
 	}
 	return Result(r, err)
 }
 
 func (s *state) runCommand(ctx context.Context) error {
 	// start the interceptor process
+	progress.Start(ctx, "Starting")
+	defer progress.Stop(ctx)
+
 	if !s.DockerFlags.Run {
 		env := s.info.Environment
 		cmd, err := proc.Start(ctx, env, s.Cmdline[0], s.Cmdline[1:]...)
@@ -336,9 +340,9 @@ func parsePort(portSpec string, dockerRun, containerized bool) (local uint16, do
 	portMapping := strings.Split(portSpec, ":")
 	portError := func() (uint16, uint16, string, error) {
 		if dockerRun && !containerized {
-			return 0, 0, "", errcat.User.New("port must be of the format --port <local-port>:<container-port>[:<svcPortIdentifier>]")
+			return 0, 0, "", errcat.User.Newf("port must be of the format --port <local-port>:<container-port>[:<svcPortIdentifier>], was %q", portSpec)
 		}
-		return 0, 0, "", errcat.User.New("port must be of the format --port <local-port>[:<svcPortIdentifier>]")
+		return 0, 0, "", errcat.User.Newf("port must be of the format --port <local-port>[:<svcPortIdentifier>], was %q", portSpec)
 	}
 
 	if p := portMapping[0]; p != "" {
@@ -351,6 +355,9 @@ func parsePort(portSpec string, dockerRun, containerized bool) (local uint16, do
 	case 1:
 	case 2:
 		if p := portMapping[1]; p != "" {
+			if p == "all" {
+				return 0, 0, p, nil
+			}
 			if dockerRun && !containerized {
 				if docker, err = types.ParseNumericPort(p); err != nil {
 					return portError()

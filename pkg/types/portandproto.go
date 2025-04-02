@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	core "k8s.io/api/core/v1"
 )
 
@@ -58,11 +60,24 @@ func NewPortAndProto(s string) (PortAndProto, error) {
 	return pp, err
 }
 
+func (pp *PortAndProto) MarshalJSONTo(out *jsontext.Encoder) error {
+	return json.MarshalEncode(out, pp.String())
+}
+
 // String will consistently yield the identifier without the protocol suffix when the protocol is TCP
 // and otherwise always use the suffix "/UDP".
-func (pp PortAndProto) String() string {
+func (pp *PortAndProto) String() string {
 	if pp.Proto == core.ProtocolTCP {
 		return strconv.Itoa(int(pp.Port))
 	}
 	return fmt.Sprintf("%d/%s", pp.Port, pp.Proto)
+}
+
+func (pp *PortAndProto) UnmarshalJSONFrom(in *jsontext.Decoder) error {
+	var s string
+	err := json.UnmarshalDecode(in, &s)
+	if err == nil {
+		*pp, err = NewPortAndProto(s)
+	}
+	return err
 }
