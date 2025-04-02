@@ -29,6 +29,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/output"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/socket"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
@@ -64,22 +65,25 @@ var QuitDaemonFuncs = []func(context.Context){
 
 func quitHostConnector(ctx context.Context) {
 	udCtx, err := ExistingHostDaemon(ctx, nil)
+	pid := "user daemon"
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			dlog.Errorf(ctx, "unable to quit existing user daemon: %v", err)
+			progress.Write(ctx, progress.ErrorMessageEvent(pid, fmt.Sprintf("unable to quit existing user daemon: %v", err)))
 		}
 		return
 	}
 	ud := daemon.GetUserClient(udCtx)
+	progress.Write(ctx, progress.WorkingEvent(pid, "Quitting"))
 	_, _ = ud.Quit(ctx, &emptypb.Empty{})
 	_ = ud.Close()
-	_ = socket.WaitUntilVanishes("user daemon", socket.UserDaemonPath(ctx), 5*time.Second)
+	_ = socket.WaitUntilVanishes(pid, socket.UserDaemonPath(ctx), 5*time.Second)
 
 	// User daemon is responsible for killing the root daemon, but we kill it here too to cater for
 	// the fact that the user daemon might have been killed ungracefully.
 	if waitErr := socket.WaitUntilVanishes("root daemon", socket.RootDaemonPath(ctx), 5*time.Second); waitErr != nil {
 		quitRootDaemon(ctx)
 	}
+	progress.Write(ctx, progress.DoneEvent(pid, "Quit"))
 }
 
 func quitDockerDaemons(ctx context.Context) {
@@ -89,14 +93,17 @@ func quitDockerDaemons(ctx context.Context) {
 		return
 	}
 	for _, info := range infos {
+		id := info.DaemonID().Name
+		progress.Write(ctx, progress.WorkingEvent(id, "Quitting"))
 		udCtx, err := ExistingDaemon(ctx, info)
 		if err != nil {
-			dlog.Error(ctx, err)
+			progress.Write(ctx, progress.ErrorMessageEvent(id, err.Error()))
 			continue
 		}
 		ud := daemon.GetUserClient(udCtx)
 		_, _ = ud.Quit(ctx, &emptypb.Empty{})
 		_ = ud.Close()
+		progress.Write(ctx, progress.DoneEvent(id, "Quit"))
 	}
 	if err = daemon.WaitUntilAllVanishes(ctx, 5*time.Second); err != nil {
 		dlog.Error(ctx, err)
@@ -138,27 +145,26 @@ func ExistingHostDaemon(ctx context.Context, id *daemon.Identifier) (context.Con
 
 // Quit shuts down all daemons.
 func Quit(ctx context.Context) {
-	stdout := output.Out(ctx)
-	ioutil.Print(stdout, "Telepresence Daemons quitting...")
+	progress.Start(ctx, "Quitting")
+	defer progress.Stop(ctx)
 	for _, quitFunc := range QuitDaemonFuncs {
 		quitFunc(ctx)
 	}
-	ioutil.Println(stdout, "done")
 }
 
 // Disconnect disconnects from a session in the user daemon.
 func Disconnect(ctx context.Context) {
 	if ud := daemon.GetUserClient(ctx); ud == nil {
-		ioutil.Println(output.Out(ctx), "Not connected")
+		progress.Write(ctx, progress.DoneEvent("", "Not connected"))
 	} else {
 		_, err := ud.Disconnect(ctx, &emptypb.Empty{})
 		switch {
 		case err == nil:
-			ioutil.Println(output.Out(ctx), "Disconnected")
+			progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, "Disconnected"))
 		case status.Code(err) == codes.Unavailable:
-			ioutil.Println(output.Out(ctx), "Not connected")
+			progress.Write(ctx, progress.DoneEvent(ud.DaemonID().Name, "Not connected"))
 		default:
-			ioutil.Printf(output.Err(ctx), "failed to disconnect: %v\n", err)
+			_ = progress.MaybeWriteError(ctx, ud.DaemonID().Name, fmt.Errorf("failed to disconnect: %v\n", err))
 		}
 	}
 }
@@ -167,6 +173,7 @@ func RunConnect(cmd *cobra.Command, args []string) error {
 	if err := InitCommand(cmd); err != nil {
 		return err
 	}
+	defer progress.Stop(cmd.Context())
 	if len(args) == 0 {
 		return nil
 	}
@@ -229,7 +236,7 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 		return ctx, ErrNoUserDaemon
 	}
 
-	ioutil.Println(output.Info(ctx), "Launching Telepresence User Daemon")
+	progress.Write(ctx, progress.WorkingEvent(daemonID.Name, "Launching Telepresence User Daemon"))
 	if err = ensureAppUserCacheDirs(ctx); err != nil {
 		return ctx, err
 	}
@@ -267,7 +274,7 @@ func launchConnectorDaemon(ctx context.Context, connectorDaemon string, required
 		if err != nil {
 			return ctx, err
 		}
-		conn, err = docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID)
+		conn, err = docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID, cr.NetworkAliases)
 	} else {
 		args := []string{connectorDaemon, "connector-foreground"}
 		if cr.UserDaemonProfilingPort > 0 {
@@ -381,7 +388,7 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 	var ci *connector.ConnectInfo
 	var err error
 	if userD.Containerized() {
-		patcher.AnnotateConnectRequest(&request.ConnectRequest, docker.TpCache, userD.DaemonID().KubeContext)
+		patcher.AnnotateConnectRequest(request.ConnectRequest, docker.TpCache, userD.DaemonID().KubeContext)
 	}
 	session := func(ci *connector.ConnectInfo, started bool) *daemon.Session {
 		// Update the request from the connect info.
@@ -443,7 +450,8 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 		cat := errcat.Unknown
 		switch ci.Error {
 		case connector.ConnectInfo_UNSPECIFIED:
-			ioutil.Printf(output.Info(ctx), "Connected to context %s, namespace %s (%s)\n", ci.ClusterContext, ci.Namespace, ci.ClusterServer)
+			msg := fmt.Sprintf("Connected to context %s, namespace %s (%s)", ci.ClusterContext, ci.Namespace, ci.ClusterServer)
+			progress.Write(ctx, progress.DoneEvent(ci.ConnectionName, msg))
 			err := warnMngrVersion(ci)
 			if err != nil {
 				dlog.Error(ctx, err)
@@ -498,7 +506,7 @@ func connectSession(ctx context.Context, useLine string, userD daemon.UserClient
 			return nil, errcat.NoDaemonLogs.New(err)
 		}
 	}
-	if ci, err = userD.Connect(ctx, &request.ConnectRequest); err != nil {
+	if ci, err = userD.Connect(ctx, request.ConnectRequest); err != nil {
 		if !userD.Containerized() {
 			file := userD.DaemonID().InfoFileName()
 			dlog.Debugf(ctx, "Deleting daemon info %s due to connect error: %v", file, err)

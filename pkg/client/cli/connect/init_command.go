@@ -9,6 +9,8 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/global"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
+	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
 )
 
@@ -26,7 +28,22 @@ func InitCommand(cmd *cobra.Command) (err error) {
 	return cmdInit(cmd)
 }
 
+func InitProgressWriter(cmd *cobra.Command) {
+	ctx := cmd.Context()
+	if progress.IsNoOp(ctx) {
+		mode := progress.ModeAuto
+		if pf := cmd.Flag("progress"); pf != nil && pf.Changed {
+			mode = progress.Mode(pf.Value.String())
+		} else if pa, ok := cmd.Annotations[ann.Progress]; ok {
+			mode = progress.Mode(pa)
+		}
+		w := progress.NewWriter(dos.Stdout(ctx), mode)
+		cmd.SetContext(progress.WithContextWriter(ctx, w))
+	}
+}
+
 func CommandInitializer(cmd *cobra.Command) (err error) {
+	InitProgressWriter(cmd)
 	ctx := cmd.Context()
 	as := cmd.Annotations
 

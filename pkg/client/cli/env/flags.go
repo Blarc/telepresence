@@ -19,7 +19,7 @@ func (f *Flags) AddFlags(flagSet *pflag.FlagSet) {
 	flagSet.StringVarP(&f.JSON, "env-json", "j", "", `Also emit the remote environment to a file as a JSON blob.`)
 }
 
-func (f *Flags) PerhapsWrite(env map[string]string) error {
+func (f *Flags) MaybeWrite(env map[string]string) error {
 	if f.File != "" {
 		if err := f.Syntax.writeFile(f.File, env); err != nil {
 			return err

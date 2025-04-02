@@ -22,6 +22,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ann"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/scout"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
@@ -98,6 +99,8 @@ func (gl *gatherLogsCommand) gatherLogs(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ctx := cmd.Context()
+	defer progress.Stop(ctx)
+
 	ctx = dos.WithStdio(ctx, cmd)
 	ctx = scout.NewReporter(ctx, "cli")
 	scout.Start(ctx)

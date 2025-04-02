@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/global"
 )
 
@@ -33,35 +34,62 @@ Unless the daemons are already started, an attempt will be made to start them.
 This will involve a call to sudo unless this command is run as root (not
 recommended) which in turn may result in a password prompt.`
 
-	usage = `Usage:{{if .Runnable}}
-  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
-  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
+	usage = `Usage:
+{{- if .Runnable}}
+  {{.UseLine}}
+{{- end}}
+{{- if .HasAvailableSubCommands}}
+  {{.CommandPath}} [command]
+{{- end}}
+{{- if gt (len .Aliases) 0}}
 
 Aliases:
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
+  {{.NameAndAliases}}
+{{- end}}
+{{- if .HasExample}}
 
 Examples:
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
+{{.Example}}
+{{- end}}
+{{- if .HasAvailableSubCommands}}
 
-Available Commands:{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+Available Commands:
+  {{- range .Commands}}
+    {{- if (or .IsAvailableCommand (eq .Name "help")) }}
+  {{rpad .Name .NamePadding }} {{.Short}}
+    {{- end}}
+  {{- end}}
+{{- end}}
+{{- if .HasAvailableLocalFlags}}
 
-Flags:
-{{flags . | wrappedFlagUsages | trimTrailingWhitespaces}}{{end}}
+{{- range flags .}}
+
+{{.Name}}:
+{{wrappedFlagUsages . | trimTrailingWhitespaces}}
+{{- end}}
+{{- end}}
 {{- if hasKubeFlags .}}
 
 Kubernetes flags:
 {{kubeFlags | wrappedFlagUsages | trimTrailingWhitespaces}}{{end}}
 
 Global flags:
-{{globalFlags . | wrappedFlagUsages | trimTrailingWhitespaces}}{{if .HasHelpSubCommands}}
+{{globalFlags . | wrappedFlagUsages | trimTrailingWhitespaces}}
+{{- if .HasHelpSubCommands}}
 
-Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+Additional help topics:
+  {{- range .Commands}}
+    {{- if .IsAdditionalHelpTopicCommand}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}
+    {{- end}}
+  {{- end}}
+{{- end}}
+{{- if .HasAvailableSubCommands}}
 
 Use "{{.CommandPath}} [command] --help" for more information about a command.
 
-For complete documentation and quick-start guides, check out our website at {{ getDocumentationURL }}{{end}}
+For complete documentation and quick-start guides, check out our website at {{ getDocumentationURL }}
+{{- end}}
 `
 )
 
@@ -75,8 +103,12 @@ func flagEqual(a, b *pflag.Flag) bool {
 	return a.Name == b.Name && a.Usage == b.Usage && a.Hidden == b.Hidden
 }
 
-func localFlags(cmd *cobra.Command, exclude ...*pflag.FlagSet) *pflag.FlagSet {
-	ngFlags := pflag.NewFlagSet("local", pflag.ContinueOnError)
+func localFlags(cmd *cobra.Command, exclude ...*pflag.FlagSet) []*pflag.FlagSet {
+	ngFlags := pflag.NewFlagSet("Flags", pflag.ContinueOnError)
+	extra := flags.GetFlagSets(cmd.Context())
+	if len(extra) > 0 {
+		exclude = append(exclude, extra...)
+	}
 	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
 		for _, ex := range exclude {
 			if flagEqual(flag, ex.Lookup(flag.Name)) {
@@ -85,16 +117,16 @@ func localFlags(cmd *cobra.Command, exclude ...*pflag.FlagSet) *pflag.FlagSet {
 		}
 		ngFlags.AddFlag(flag)
 	})
-	return ngFlags
+	return append([]*pflag.FlagSet{ngFlags}, extra...)
 }
 
 func kubeFlags() *pflag.FlagSet {
 	pflag.NewFlagSet("Kubernetes flags", 0)
 	kubeConfig := genericclioptions.NewConfigFlags(false)
 	kubeConfig.Namespace = nil // "connect", don't take --namespace
-	flags := pflag.NewFlagSet("Kubernetes flags", 0)
-	kubeConfig.AddFlags(flags)
-	return flags
+	kfs := pflag.NewFlagSet("Kubernetes flags", 0)
+	kubeConfig.AddFlags(kfs)
+	return kfs
 }
 
 func hasKubeFlags(cmd *cobra.Command) bool {
@@ -110,7 +142,7 @@ func hasKubeFlags(cmd *cobra.Command) bool {
 
 func addUsageTemplate(cmd *cobra.Command) {
 	cobra.AddTemplateFunc("globalFlags", func(cmd *cobra.Command) *pflag.FlagSet { return global.Flags(hasKubeFlags(cmd)) })
-	cobra.AddTemplateFunc("flags", func(cmd *cobra.Command) *pflag.FlagSet {
+	cobra.AddTemplateFunc("flags", func(cmd *cobra.Command) []*pflag.FlagSet {
 		return localFlags(cmd, kubeFlags(), global.Flags(hasKubeFlags(cmd)))
 	})
 	cobra.AddTemplateFunc("hasKubeFlags", hasKubeFlags)

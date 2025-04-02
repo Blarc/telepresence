@@ -1,0 +1,90 @@
+/*
+   Copyright 2024 Docker Compose CLI authors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
+
+package progress
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/go-json-experiment/json"
+)
+
+type jsonWriter struct {
+	out    io.Writer
+	dryRun bool
+}
+
+type jsonMessage struct {
+	DryRun   bool   `json:"dry-run,omitempty"`
+	Tail     bool   `json:"tail,omitempty"`
+	ID       string `json:"id,omitempty"`
+	ParentID string `json:"parent_id,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Current  int64  `json:"current,omitempty"`
+	Total    int64  `json:"total,omitempty"`
+	Percent  int    `json:"percent,omitempty"`
+}
+
+func (p *jsonWriter) Start(context.Context, string) {
+}
+
+func (p *jsonWriter) IsNoOp() bool {
+	return false
+}
+
+func (p *jsonWriter) write(e Event) {
+	message := &jsonMessage{
+		DryRun:   p.dryRun,
+		Tail:     false,
+		ID:       e.ID,
+		Text:     e.Text,
+		Status:   e.StatusText,
+		ParentID: e.ParentID,
+		Current:  e.Current,
+		Total:    e.Total,
+		Percent:  e.Percent,
+	}
+	marshal, err := json.Marshal(message)
+	if err == nil {
+		_, _ = fmt.Fprintln(p.out, string(marshal))
+	}
+}
+
+func (p *jsonWriter) Write(events ...Event) {
+	for _, e := range events {
+		p.write(e)
+	}
+}
+
+func (p *jsonWriter) TailMsgf(msg string, args ...any) {
+	message := &jsonMessage{
+		DryRun: p.dryRun,
+		Tail:   true,
+		ID:     "",
+		Text:   fmt.Sprintf(msg, args...),
+		Status: "",
+	}
+	marshal, err := json.Marshal(message)
+	if err == nil {
+		_, _ = fmt.Fprintln(p.out, string(marshal))
+	}
+}
+
+func (p *jsonWriter) Stop() {
+}

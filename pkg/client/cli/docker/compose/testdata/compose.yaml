@@ -1,0 +1,12 @@
+services:
+  echo-easy:
+    image: ghcr.io/telepresenceio/echo-server
+  local-echo:
+    image: ghcr.io/telepresenceio/echo-server
+  curl:
+    image: curlimages/curl
+    command:
+      - echo-easy:8080
+    depends_on:
+      echo-easy:
+        condition: service_started

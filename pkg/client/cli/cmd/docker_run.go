@@ -152,7 +152,11 @@ func runDockerRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(opts.Networks) > 0 {
-		connectCancel, err := cliDocker.ConnectNetworksToDaemon(ctx, opts.Networks, daemonName)
+		ns := make([]cliDocker.Network, len(opts.Networks))
+		for i, n := range opts.Networks {
+			ns[i] = cliDocker.Network{Name: n}
+		}
+		connectCancel, err := cliDocker.ConnectNetworksToDaemon(ctx, daemonName, ns)
 		defer connectCancel()
 		if err != nil {
 			return err

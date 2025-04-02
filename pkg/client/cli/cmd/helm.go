@@ -177,5 +177,5 @@ func (ha *HelmCommand) run(cmd *cobra.Command, _ []string) (err error) {
 			return err
 		}
 	}
-	return ha.Run(ctx, &ha.rq.Request.ConnectRequest)
+	return ha.Run(ctx, ha.rq.Request.ConnectRequest)
 }

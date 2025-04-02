@@ -17,6 +17,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ann"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/connect"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/socket"
 	"github.com/telepresenceio/telepresence/v2/pkg/ioutil"
 	"github.com/telepresenceio/telepresence/v2/pkg/proc"
@@ -94,6 +95,7 @@ func printVersion(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	defer progress.Stop(cmd.Context())
 	ctx := cmd.Context()
 
 	if len(mdErr) > 0 {

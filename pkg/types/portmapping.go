@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	core "k8s.io/api/core/v1"
 )
 
@@ -41,6 +43,18 @@ func (p PortMapping) To() PortAndProto {
 
 func (p PortMapping) Validate() error {
 	_, _, err := p.FromAndTo()
+	return err
+}
+
+func (p *PortMapping) UnmarshalJSONFrom(in *jsontext.Decoder) error {
+	var s string
+	err := json.UnmarshalDecode(in, &s)
+	if err == nil {
+		err = PortMapping(s).Validate()
+		if err == nil {
+			*p = PortMapping(s)
+		}
+	}
 	return err
 }
 

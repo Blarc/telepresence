@@ -10,6 +10,7 @@ const (
 	FlagUse      = "use"
 	FlagOutput   = "output"
 	FlagNoReport = "no-report"
+	FlagProgress = "progress"
 )
 
 func Flags(hasKubeFlags bool) *pflag.FlagSet {
@@ -27,5 +28,6 @@ func Flags(hasKubeFlags bool) *pflag.FlagSet {
 	f.Deprecated = "not used"
 	flags.String(FlagUse, "", "Match expression that uniquely identifies the daemon container")
 	flags.String(FlagOutput, "default", "Set the output format, supported values are 'json', 'yaml', and 'default'")
+	flags.String(FlagProgress, "auto", `Set type of progress output (auto, tty, plain, json, quiet)`)
 	return flags
 }

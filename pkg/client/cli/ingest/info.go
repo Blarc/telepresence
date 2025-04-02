@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"io"
+	"strings"
 
 	rpc "github.com/telepresenceio/telepresence/rpc/v2/connector"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/mount"
@@ -33,6 +34,12 @@ func NewInfo(ctx context.Context, ii *rpc.IngestInfo, mountError error) *Info {
 		PodIP:        ii.PodIp,
 		Environment:  ii.Environment,
 	}
+}
+
+func (ii *Info) String() string {
+	sb := strings.Builder{}
+	_, _ = ii.WriteTo(&sb)
+	return sb.String()
 }
 
 func (ii *Info) WriteTo(w io.Writer) (int64, error) {

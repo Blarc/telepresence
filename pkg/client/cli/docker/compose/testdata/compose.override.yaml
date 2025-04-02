@@ -1,0 +1,5 @@
+services:
+  echo-easy:
+    x-wiretap:
+      ports:
+        - proxied:8080

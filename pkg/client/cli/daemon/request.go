@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"google.golang.org/protobuf/proto"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -26,11 +27,12 @@ import (
 	"github.com/telepresenceio/telepresence/rpc/v2/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/global"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
+	"github.com/telepresenceio/telepresence/v2/pkg/maps"
 	"github.com/telepresenceio/telepresence/v2/pkg/slice"
 )
 
 type Request struct {
-	connector.ConnectRequest
+	*connector.ConnectRequest
 
 	// If set, then use a containerized daemon for the connection.
 	Docker bool
@@ -56,6 +58,9 @@ type Request struct {
 
 	// vnats holds the string version for the --vnat flag values.
 	vnats []string
+
+	// Aliases by which this daemon can be referenced (added to the telepresence network).
+	NetworkAliases []string
 }
 
 type CobraRequest struct {
@@ -68,7 +73,11 @@ type CobraRequest struct {
 // here so that a map of flags that gets modified can be extracted using FlagMap once the flag
 // parsing has completed.
 func InitRequest(cmd *cobra.Command) *CobraRequest {
-	cr := CobraRequest{}
+	cr := CobraRequest{
+		Request: Request{
+			ConnectRequest: &connector.ConnectRequest{},
+		},
+	}
 	flags := cmd.Flags()
 
 	nwFlags := pflag.NewFlagSet("Telepresence networking flags", 0)
@@ -326,6 +335,22 @@ func (cr *Request) setGlobalConnectFlags(cmd *cobra.Command) error {
 	return nil
 }
 
+func (cr *Request) Clone() *Request {
+	cl := *cr
+	cl.ConnectRequest = proto.Clone(cr.ConnectRequest).(*connector.ConnectRequest)
+	cl.AllowConflictingSubnets = slices.Clone(cr.AllowConflictingSubnets)
+	cl.AlsoProxy = slices.Clone(cr.AlsoProxy)
+	cl.ContainerKubeFlagOverrides = maps.Copy(cr.ContainerKubeFlagOverrides)
+	cl.Environment = maps.Copy(cl.Environment)
+	cl.ExposedPorts = slices.Clone(cr.ExposedPorts)
+	cl.KubeFlags = maps.Copy(cl.KubeFlags)
+	cl.MappedNamespaces = slices.Clone(cr.MappedNamespaces)
+	cl.NeverProxy = slices.Clone(cr.NeverProxy)
+	cl.SubnetViaWorkloads = slices.Clone(cr.SubnetViaWorkloads)
+	cl.proxyVia = slices.Clone(cr.proxyVia)
+	return &cl
+}
+
 func GetRequest(ctx context.Context) *Request {
 	if cr, ok := ctx.Value(requestKey{}).(*Request); ok {
 		return cr
@@ -358,7 +383,7 @@ func WithRequest(ctx context.Context, cr *Request) context.Context {
 
 func NewDefaultRequest() *Request {
 	cr := Request{
-		ConnectRequest: connector.ConnectRequest{
+		ConnectRequest: &connector.ConnectRequest{
 			KubeFlags: make(map[string]string),
 		},
 		kubeConfig: genericclioptions.NewConfigFlags(false),
