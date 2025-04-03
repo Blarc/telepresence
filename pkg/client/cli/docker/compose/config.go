@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/cli"
@@ -146,8 +147,7 @@ func (c *Config) Run(cmd *cobra.Command, services []string) (err error) {
 	c.Services = services
 	c.Progress = cmd.Flag(global.FlagProgress).Value.String()
 	ctx := cmd.Context()
-	w := progress.NewWriter(cmd.OutOrStdout(), progress.Mode(c.Progress))
-	w.Start(ctx, "Engaging")
+	w := progress.NewWriter(cmd.OutOrStdout(), cmd.ErrOrStderr(), progress.Mode(c.Progress))
 
 	// Tell underlying framework to keep quiet
 	ctx = progress.WithContextWriter(ctx, w)
@@ -175,13 +175,13 @@ func (c *Config) Run(cmd *cobra.Command, services []string) (err error) {
 		EnableSignalHandling: true,
 	})
 
-	evs := make([]progress.Event, 0, len(es))
-	for _, e := range es {
-		evs = append(evs, progress.WorkingEvent(e.ComposeService, "Connecting"))
-	}
-	progress.Write(ctx, evs...)
-
 	aesCh := make(chan *ActiveEngagement, len(es))
+	wg := &sync.WaitGroup{}
+	wg.Add(len(es))
+
+	once := sync.Once{}
+	latch := make(chan struct{})
+	progress.Start(ctx, "Connecting")
 	for _, e := range es {
 		g.Go(e.Name, func(ctx context.Context) error {
 			// We take care of our own cancellation when this goroutine is done.
@@ -191,13 +191,26 @@ func (c *Config) Run(cmd *cobra.Command, services []string) (err error) {
 			defer cancel()
 
 			ctx, err := e.Connect(ctx)
+			wg.Done()
 			if err != nil {
 				if errcat.GetCategory(err) == errcat.Silent {
 					return err
 				}
 				return progress.MaybeWriteError(ctx, e.ComposeService, err)
 			}
-			progress.Write(ctx, progress.DoneEvent(e.ComposeService, "Connected"))
+
+			// Wait for everyone to connect
+			wg.Wait()
+
+			// Then start a new progress group
+			once.Do(func() {
+				progress.Start(ctx, "Engaging")
+				close(latch)
+			})
+
+			// Wait for the new progress group to be started
+			<-latch
+
 			progress.Write(ctx, progress.WorkingEvent(e.ComposeService, e.Type.Working()))
 			ae, err := e.Activate(ctx)
 			if err != nil {
@@ -216,6 +229,9 @@ func (c *Config) Run(cmd *cobra.Command, services []string) (err error) {
 		for len(aes) < len(es) {
 			select {
 			case <-ctx.Done():
+				for _, ae := range aes {
+					close(ae.done)
+				}
 				return nil
 			case ae := <-aesCh:
 				aes[ae.ComposeService] = ae

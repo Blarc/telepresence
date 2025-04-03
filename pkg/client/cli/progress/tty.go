@@ -179,7 +179,8 @@ func (w *ttyWriter) print() { //nolint:gocyclo
 	for i := 0; i <= w.numLines; i++ {
 		b = b.Up(1)
 	}
-	if !w.repeated {
+	single := len(w.events) == 1
+	if single || !w.repeated {
 		b = b.Down(1)
 	}
 	w.repeated = true
@@ -191,16 +192,21 @@ func (w *ttyWriter) print() { //nolint:gocyclo
 		_, _ = fmt.Fprint(w.out, aec.Show)
 	}()
 
-	firstLine := fmt.Sprintf("[+] %s %d/%d", w.progressTitle, numDone(w.events), len(w.events))
-	if numDone(w.events) == len(w.events) {
-		firstLine = DoneColor(firstLine)
+	if !single {
+		firstLine := fmt.Sprintf("[+] %s %d/%d", w.progressTitle, numDone(w.events), len(w.events))
+		if numDone(w.events) == len(w.events) {
+			firstLine = DoneColor(firstLine)
+		}
+		_, _ = fmt.Fprintln(w.out, firstLine)
 	}
-	_, _ = fmt.Fprintln(w.out, firstLine)
 
 	var statusPadding int
 	for _, v := range w.eventIDs {
 		event := w.events[v]
-		l := len(fmt.Sprintf("%s %s", event.ID, event.Text))
+		l := len(event.Text)
+		if !single {
+			l += len(event.ID) + 1
+		}
 		if statusPadding < l {
 			statusPadding = l
 		}
@@ -218,7 +224,7 @@ func (w *ttyWriter) print() { //nolint:gocyclo
 		if event.ParentID != "" {
 			continue
 		}
-		line := w.lineText(event, "", int(ws.Width), statusPadding)
+		line := w.lineText(event, single, "", int(ws.Width), statusPadding)
 		_, _ = fmt.Fprint(w.out, line)
 		numLines++
 		for _, v := range w.eventIDs {
@@ -227,7 +233,7 @@ func (w *ttyWriter) print() { //nolint:gocyclo
 				if w.skipChildEvents {
 					continue
 				}
-				line := w.lineText(ev, "  ", int(ws.Width), statusPadding)
+				line := w.lineText(ev, single, "  ", int(ws.Width), statusPadding)
 				_, _ = fmt.Fprint(w.out, line)
 				numLines++
 			}
@@ -242,7 +248,7 @@ func (w *ttyWriter) print() { //nolint:gocyclo
 	w.numLines = numLines
 }
 
-func (w *ttyWriter) lineText(event Event, pad string, terminalWidth, statusPadding int) string {
+func (w *ttyWriter) lineText(event Event, single bool, pad string, terminalWidth, statusPadding int) string {
 	endTime := time.Now()
 	if event.Status != Working {
 		endTime = event.startTime
@@ -285,16 +291,18 @@ func (w *ttyWriter) lineText(event Event, pad string, terminalWidth, statusPaddi
 	if len(completion) > 0 {
 		var details string
 		if !hideDetails {
-			details = fmt.Sprintf(" %7s / %-7s", units.HumanSize(float64(current)), units.HumanSize(float64(total)))
+			details = fmt.Sprintf(" %7s / %-7s ", units.HumanSize(float64(current)), units.HumanSize(float64(total)))
 		}
-		txt = fmt.Sprintf("%s [%s]%s %s",
-			event.ID,
+		txt = fmt.Sprintf("[%s]%s%s",
 			SuccessColor(strings.Join(completion, "")),
 			details,
 			event.Text,
 		)
 	} else {
-		txt = fmt.Sprintf("%s %s", event.ID, event.Text)
+		txt = event.Text
+	}
+	if !single {
+		txt = fmt.Sprintf("%s %s", event.ID, txt)
 	}
 	textLen := len(txt)
 	padding := statusPadding - textLen
@@ -309,7 +317,7 @@ func (w *ttyWriter) lineText(event Event, pad string, terminalWidth, statusPaddi
 	if maxStatusLen > 0 && len(status) > maxStatusLen {
 		status = status[:maxStatusLen] + "..."
 	}
-	text := fmt.Sprintf("%s %s %s%s %s",
+	text := fmt.Sprintf("%s %s %s%s%s",
 		pad,
 		event.Spinner(),
 		txt,

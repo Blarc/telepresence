@@ -106,7 +106,7 @@ const (
 )
 
 // NewWriter returns a new multi-progress writer
-func NewWriter(out io.Writer, mode Mode) Writer {
+func NewWriter(out, ttyOut io.Writer, mode Mode) Writer {
 	_, isTerminal := term.GetFdInfo(out)
 	if mode == ModeQuiet {
 		return quiet{}
@@ -117,7 +117,7 @@ func NewWriter(out io.Writer, mode Mode) Writer {
 		tty = true
 	}
 	if tty {
-		return newTTYWriter(out)
+		return newTTYWriter(ttyOut)
 	}
 	if mode == ModeJSON {
 		return &jsonWriter{

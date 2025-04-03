@@ -186,6 +186,7 @@ func (e *Engagement) Activate(ctx context.Context) (*ActiveEngagement, error) {
 		Engagement: e,
 		DaemonID:   daemonID,
 		DaemonIP:   daemonIP,
+		done:       make(chan error),
 	}
 
 	if e.Extension.Type == types.EngagementTypeConnect {
@@ -197,7 +198,6 @@ func (e *Engagement) Activate(ctx context.Context) (*ActiveEngagement, error) {
 		return nil, err
 	}
 	ae.SftpPort = uint16(lma[0].Port)
-	ae.done = make(chan error)
 
 	if e.Extension.Type == types.EngagementTypeIngest {
 		ir := e.CreateIngestRequest(ae.SftpPort)

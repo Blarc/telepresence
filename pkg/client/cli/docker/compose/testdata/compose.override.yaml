@@ -3,3 +3,6 @@ services:
     x-wiretap:
       ports:
         - proxied:8080
+  local-echo:
+    x-connect:
+      namespace: ambassador
