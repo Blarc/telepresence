@@ -50,7 +50,7 @@ require (
 	golang.zx2c4.com/wireguard v0.0.0-20231211153847-12269c276173
 	golang.zx2c4.com/wireguard/windows v0.5.3
 	google.golang.org/grpc v1.71.0
-	google.golang.org/protobuf v1.36.5
+	google.golang.org/protobuf v1.36.6
 	gvisor.dev/gvisor v0.0.0-20250318191406-9e676ea1de20
 	helm.sh/helm/v3 v3.17.2
 	k8s.io/api v0.32.3
