@@ -65,7 +65,7 @@ func ClientImage(ctx context.Context) string {
 }
 
 // DaemonOptions returns the options necessary to pass to a docker run when starting a daemon container.
-func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier, aliases []string) ([]string, *net.TCPAddr, error) {
+func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier) ([]string, *net.TCPAddr, error) {
 	as, err := client.FreePortsTCP(1)
 	if err != nil {
 		return nil, nil, err
@@ -73,7 +73,6 @@ func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier, aliases []s
 	addr := as[0]
 	opts := []string{
 		"--name", daemonID.ContainerName(),
-		"--network", "telepresence",
 		"--cap-add", "NET_ADMIN",
 		"--sysctl", "net.ipv6.conf.all.disable_ipv6=0",
 		"--device", "/dev/net/tun:/dev/net/tun",
@@ -83,9 +82,6 @@ func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier, aliases []s
 		"-v", fmt.Sprintf("%s:%s:ro", filelocation.AppUserConfigDir(ctx), DockerTpConfig),
 		"-v", fmt.Sprintf("%s:%s", filelocation.AppUserCacheDir(ctx), TpCache),
 		"-v", fmt.Sprintf("%s:%s", filelocation.AppUserLogDir(ctx), DockerTpLog),
-	}
-	for _, alias := range aliases {
-		opts = append(opts, "--network-alias", alias)
 	}
 	cr := daemon.GetRequest(ctx)
 	for _, ep := range cr.ExposedPorts {
@@ -106,13 +102,17 @@ func DaemonOptions(ctx context.Context, daemonID *daemon.Identifier, aliases []s
 }
 
 // DaemonArgs returns the arguments to pass to a docker run when starting a container daemon.
-func DaemonArgs(daemonID *daemon.Identifier, port int) []string {
-	return []string{
+func DaemonArgs(daemonID *daemon.Identifier, port, teleroutePort int) []string {
+	args := []string{
 		"connector-foreground",
 		"--name", "docker-" + daemonID.String(),
 		"--address", fmt.Sprintf(":%d", port),
 		"--embed-network",
 	}
+	if teleroutePort > 0 {
+		args = append(args, "--teleroute-port", strconv.Itoa(teleroutePort))
+	}
+	return args
 }
 
 // ConnectDaemon connects to a containerized daemon at the given address.
@@ -337,7 +337,7 @@ func handleLocalK8s(ctx context.Context, daemonID *daemon.Identifier, config *ap
 // LaunchDaemon ensures that the image returned by ClientImage exists by calling PullImage. It then uses the
 // options DaemonOptions and DaemonArgs to start the image, and finally connectDaemon to connect to it. A
 // successful start yields a cache.Info entry in the cache.
-func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier, networkAliases []string) (conn *grpc.ClientConn, err error) {
+func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier, teleroutePort int) (conn *grpc.ClientConn, err error) {
 	image := ClientImage(ctx)
 	if err = PullImage(ctx, daemonID.Name, image); err != nil {
 		return nil, err
@@ -348,15 +348,11 @@ func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier, networkAlias
 	if _, err = client.InstallID(ctx); err != nil {
 		return nil, err
 	}
-
-	if err = EnsureNetwork(ctx, "telepresence"); err != nil {
-		return nil, err
-	}
-	opts, addr, err := DaemonOptions(ctx, daemonID, networkAliases)
+	opts, addr, err := DaemonOptions(ctx, daemonID)
 	if err != nil {
 		return nil, errcat.NoDaemonLogs.New(err)
 	}
-	args := DaemonArgs(daemonID, addr.Port)
+	args := DaemonArgs(daemonID, addr.Port, teleroutePort)
 
 	allArgs := make([]string, 0, len(opts)+len(args)+4)
 	allArgs = append(allArgs,
@@ -394,10 +390,7 @@ func LaunchDaemon(ctx context.Context, daemonID *daemon.Identifier, networkAlias
 	if err = enableK8SAuthenticator(ctx, daemonID); err != nil {
 		return nil, err
 	}
-	if conn, err = ConnectDaemon(ctx, addr.String()); err != nil {
-		return nil, err
-	}
-	return conn, nil
+	return ConnectDaemon(ctx, addr.String())
 }
 
 // containerPort returns the port that the container uses internally to expose the given

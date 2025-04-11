@@ -89,12 +89,14 @@ func (e *Engagement) Connect(ctx context.Context) (context.Context, error) {
 	ctx = daemon.WithRequest(ctx, cr)
 	dlog.Debugf(ctx, "Connecting to %s", e.Namespace)
 
-	ctx, err := connect.EnsureUserDaemon(ctx, true)
+	// TODO: teleroutePort
+	ctx, err := connect.EnsureUserDaemon(ctx, true, 0)
 	if err != nil {
 		return ctx, err
 	}
 
-	ctx, err = connect.EnsureSession(ctx, "compose", true)
+	// TODO: teleroutePort
+	ctx, err = connect.EnsureSession(ctx, "compose", true, 0)
 	if err != nil {
 		return ctx, err
 	}
@@ -177,7 +179,8 @@ func (e *Engagement) Activate(ctx context.Context) (*ActiveEngagement, error) {
 	}
 
 	daemonID := ud.DaemonID()
-	daemonIP, err := docker.ContainerIP(ctx, daemonID.ContainerName())
+	// TODO: Setup teleroute network
+	_, daemonIP, err := docker.ContainerPidAndIP(ctx, daemonID.ContainerName())
 	if err != nil {
 		return nil, err
 	}

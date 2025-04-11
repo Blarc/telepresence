@@ -30,3 +30,5 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/datawire/go-mkopensource v0.0.14 => github.com/telepresenceio/go-mkopensource v0.0.0-20250207190056-48117bb988fd
