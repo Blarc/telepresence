@@ -401,6 +401,8 @@ outer:
 			case codes.Unimplemented:
 				dlog.Debug(ctx, "traffic-manager does not implement WatchAgentPods")
 				return nil
+			case codes.Canceled:
+				return nil
 			default:
 				return err
 			}

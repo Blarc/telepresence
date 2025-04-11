@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/telepresenceio/telepresence/v2/pkg/client"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/ann"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/flags"
@@ -61,6 +62,8 @@ func CommandInitializer(cmd *cobra.Command) (err error) {
 		}
 	}()
 
+	var teleroutePort int
+
 	if v := as[ann.UserDaemon]; v == ann.Optional || v == ann.Required {
 		if cr := daemon.GetRequest(ctx); cr == nil {
 			if ctx, err = daemon.WithDefaultRequest(ctx, cmd); err != nil {
@@ -71,7 +74,14 @@ func CommandInitializer(cmd *cobra.Command) (err error) {
 		}
 		progress.Start(ctx, "Connecting")
 		progressStarted = true
-		ctx, err = EnsureUserDaemon(ctx, v == ann.Required)
+		if daemon.GetRequest(ctx).Docker {
+			fps, err := client.FreePortsTCP(1)
+			if err != nil {
+				return err
+			}
+			teleroutePort = fps[0].Port
+		}
+		ctx, err = EnsureUserDaemon(ctx, v == ann.Required, teleroutePort)
 		if err != nil {
 			if v == ann.Optional && (errors.Is(err, ErrNoUserDaemon) || errcat.GetCategory(err) == errcat.Config) {
 				// This is OK, but further initialization is not possible
@@ -95,7 +105,7 @@ func CommandInitializer(cmd *cobra.Command) (err error) {
 			progress.Start(ctx, "Connecting")
 			progressStarted = true
 		}
-		ctx, err = EnsureSession(ctx, cmd.UseLine(), v == ann.Required)
+		ctx, err = EnsureSession(ctx, cmd.UseLine(), v == ann.Required, teleroutePort)
 		defer progress.Stop(ctx)
 		if err != nil {
 			return err
@@ -103,23 +113,6 @@ func CommandInitializer(cmd *cobra.Command) (err error) {
 		cmd.SetContext(ctx)
 	}
 	return nil
-}
-
-// Initializer ensures that the context is initialized with connection to the user daemon, and that
-// the root daemon is running if necessary.
-func Initializer(ctx context.Context) (context.Context, error) {
-	var err error
-	if cr := daemon.GetRequest(ctx); cr == nil {
-		cr = daemon.NewDefaultRequest()
-		ctx = daemon.WithRequest(ctx, cr)
-	}
-	if ctx, err = EnsureUserDaemon(ctx, true); err != nil {
-		return ctx, err
-	}
-	if err = ensureDaemonVersion(ctx); err != nil {
-		return ctx, err
-	}
-	return ctx, nil
 }
 
 func GetOptionalSession(cmd *cobra.Command) (context.Context, *daemon.Session, error) {

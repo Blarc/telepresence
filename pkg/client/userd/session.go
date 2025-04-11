@@ -2,6 +2,7 @@ package userd
 
 import (
 	"context"
+	"sync"
 
 	"github.com/blang/semver/v4"
 	"google.golang.org/grpc"
@@ -101,7 +102,7 @@ type Session interface {
 	LeaveIngest(context.Context, *rpc.IngestIdentifier) (*rpc.IngestInfo, error)
 }
 
-type NewSessionFunc func(context.Context, ConnectRequest, *client.Kubeconfig) (context.Context, Session, *connector.ConnectInfo)
+type NewSessionFunc func(context.Context, ConnectRequest, *client.Kubeconfig, *sync.WaitGroup) (context.Context, Session, *connector.ConnectInfo)
 
 type newSessionKey struct{}
 

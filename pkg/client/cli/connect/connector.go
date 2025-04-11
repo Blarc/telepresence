@@ -30,6 +30,7 @@ import (
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/daemon"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/cli/progress"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/docker"
+	"github.com/telepresenceio/telepresence/v2/pkg/client/docker/teleroute"
 	"github.com/telepresenceio/telepresence/v2/pkg/client/socket"
 	"github.com/telepresenceio/telepresence/v2/pkg/dos"
 	"github.com/telepresenceio/telepresence/v2/pkg/errcat"
@@ -109,7 +110,7 @@ func quitDockerDaemons(ctx context.Context) {
 	}
 }
 
-func EnsureUserDaemon(ctx context.Context, required bool) (rc context.Context, err error) {
+func EnsureUserDaemon(ctx context.Context, required bool, teleroutePort int) (rc context.Context, err error) {
 	cr := daemon.GetRequest(ctx)
 	daemonID, err := daemon.IdentifierFromFlags(ctx, cr.Name, cr.KubeFlags, cr.KubeconfigData, cr.Docker)
 	if err != nil {
@@ -132,11 +133,11 @@ func EnsureUserDaemon(ctx context.Context, required bool) (rc context.Context, e
 	if daemon.GetUserClient(ctx) != nil {
 		return ctx, nil
 	}
-	rc, launched, err = launchConnectorDaemon(ctx, daemonID, client.GetExe(ctx), required)
+	rc, launched, err = launchConnectorDaemon(ctx, daemonID, client.GetExe(ctx), required, teleroutePort)
 	return rc, err
 }
 
-func EnsureSession(ctx context.Context, useLine string, required bool) (context.Context, error) {
+func EnsureSession(ctx context.Context, useLine string, required bool, teleroutePort int) (context.Context, error) {
 	if daemon.GetSession(ctx) != nil {
 		return ctx, nil
 	}
@@ -147,6 +148,40 @@ func EnsureSession(ctx context.Context, useLine string, required bool) (context.
 	}
 	if s == nil {
 		return ctx, nil
+	}
+	if s.Started && teleroutePort > 0 {
+		ctx = docker.EnableClient(ctx)
+		teleroutePlugin, err := docker.EnsureNetworkPlugin(ctx)
+		if err != nil {
+			return ctx, err
+		}
+
+		// Make an attempt to create the network with IPv6 enabled. This will fail unless the user has enabled
+		// IPv6 in /etc/docker/daemon.json.
+		cn := s.DaemonID().Name
+		cli, err := docker.GetClient(ctx)
+		if err != nil {
+			return ctx, errcat.NoDaemonLogs.New(err)
+		}
+
+		err = teleroute.CreateNetwork(ctx, s.DaemonID(), cli, teleroutePlugin, teleroutePort)
+		if err != nil && strings.Contains(err.Error(), fmt.Sprintf("%s already exists", cn)) && teleroute.IsTelerouteNetwork(ctx, cli, cn) {
+			var disconnected []string
+			disconnected, err = teleroute.RemoveNetwork(ctx, cli, cn)
+			if err == nil {
+				err = teleroute.CreateNetwork(ctx, s.DaemonID(), cli, teleroutePlugin, teleroutePort)
+				if err == nil {
+					teleroute.ReconnectNetwork(ctx, cli, cn, disconnected)
+				}
+			}
+		}
+		if err != nil {
+			return ctx, errcat.NoDaemonLogs.Newf("Unable to create network %s: %v", cn, err)
+		}
+		err = teleroute.NetworkGC(ctx, cli)
+		if err != nil {
+			return ctx, errcat.NoDaemonLogs.Newf("Unable to garbage collect teleroute networks: %v", err)
+		}
 	}
 	return daemon.WithSession(ctx, s), nil
 }
@@ -247,7 +282,76 @@ func DiscoverDaemon(ctx context.Context, match *regexp.Regexp, daemonID *daemon.
 	return ExistingDaemon(ctx, info)
 }
 
-func launchConnectorDaemon(ctx context.Context, daemonID *daemon.Identifier, connectorDaemon string, required bool) (context.Context, bool, error) {
+func launchDockerDaemon(ctx context.Context, daemonID *daemon.Identifier, teleroutePort int, cr *daemon.Request) (context.Context, *grpc.ClientConn, error) {
+	// Ensure that the logfile is present before the daemon starts so that it isn't created with
+	// permissions from the docker container.
+	logDir := filelocation.AppUserLogDir(ctx)
+	logFile := filepath.Join(logDir, "connector.log")
+	if _, err := os.Stat(logFile); err != nil {
+		if !os.IsNotExist(err) {
+			return ctx, nil, err
+		}
+		fh, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY, 0o666)
+		if err != nil {
+			return ctx, nil, err
+		}
+		_ = fh.Close()
+	}
+	ctx = docker.EnableClient(ctx)
+
+	// An initialized kubernetes interface is required by LaunchDaemon, because it is necessary
+	// when checking if the containerized daemon is connecting to a k3s control plane node.
+	ctx, kc, err := client.NewKubeconfig(ctx, cr.KubeFlags, cr.ManagerNamespace)
+	if err != nil {
+		return ctx, nil, err
+	}
+	var ki *kubernetes.Clientset
+	ki, err = kubernetes.NewForConfig(kc.RestConfig)
+	if err != nil {
+		return ctx, nil, err
+	}
+	conn, err := docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID, teleroutePort)
+	return ctx, conn, err
+}
+
+func launchHostDaemon(ctx context.Context, daemonID *daemon.Identifier, connectorDaemon string, cr *daemon.Request) (context.Context, *grpc.ClientConn, error) {
+	args := []string{connectorDaemon, "connector-foreground"}
+	if cr.UserDaemonProfilingPort > 0 {
+		args = append(args, "--pprof", strconv.Itoa(int(cr.UserDaemonProfilingPort)))
+	}
+	if proc.IsAdmin() {
+		// No use having multiple daemons when running as root.
+		args = append(args, "--embed-network")
+	}
+	dlog.Debugf(ctx, "Creating daemon info file %s (runs on host, or both CLI and daemon runs in container)", daemonID.Name)
+	err := daemon.SaveInfo(ctx,
+		&daemon.Info{
+			DaemonPort:   0,
+			Name:         daemonID.Name,
+			KubeContext:  daemonID.KubeContext,
+			Namespace:    daemonID.Namespace,
+			ExposedPorts: cr.ExposedPorts,
+			Hostname:     cr.Hostname,
+		}, daemonID.InfoFileName())
+	if err != nil {
+		return ctx, nil, err
+	}
+	defer func() {
+		if err != nil {
+			file := daemonID.InfoFileName()
+			dlog.Debugf(ctx, "Deleting daemon info %s due to launch error: %v", file, err)
+			_ = daemon.DeleteInfo(ctx, file)
+		}
+	}()
+
+	if err = proc.StartInBackground(false, args...); err != nil {
+		return ctx, nil, errcat.NoDaemonLogs.Newf("failed to launch the connector service: %w", err)
+	}
+	conn, err := socket.Dial(ctx, socket.UserDaemonPath(ctx), true)
+	return ctx, conn, err
+}
+
+func launchConnectorDaemon(ctx context.Context, daemonID *daemon.Identifier, connectorDaemon string, required bool, teleroutePort int) (context.Context, bool, error) {
 	cr := daemon.GetRequest(ctx)
 
 	// Try dialing the host daemon using the well-known socket.
@@ -283,69 +387,9 @@ func launchConnectorDaemon(ctx context.Context, daemonID *daemon.Identifier, con
 
 	var conn *grpc.ClientConn
 	if cr.Docker {
-		// Ensure that the logfile is present before the daemon starts so that it isn't created with
-		// permissions from the docker container.
-		logDir := filelocation.AppUserLogDir(ctx)
-		logFile := filepath.Join(logDir, "connector.log")
-		if _, err := os.Stat(logFile); err != nil {
-			if !os.IsNotExist(err) {
-				return ctx, false, err
-			}
-			fh, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY, 0o666)
-			if err != nil {
-				return ctx, false, err
-			}
-			_ = fh.Close()
-		}
-		ctx = docker.EnableClient(ctx)
-
-		// An initialized kubernetes interface is required by LaunchDaemon, because it is necessary
-		// when checking if the containerized daemon is connecting to a k3s control plane node.
-		var kc *client.Kubeconfig
-		ctx, kc, err = client.NewKubeconfig(ctx, cr.KubeFlags, cr.ManagerNamespace)
-		if err != nil {
-			return ctx, false, err
-		}
-		var ki *kubernetes.Clientset
-		ki, err = kubernetes.NewForConfig(kc.RestConfig)
-		if err != nil {
-			return ctx, false, err
-		}
-		conn, err = docker.LaunchDaemon(k8sapi.WithK8sInterface(ctx, ki), daemonID, cr.NetworkAliases)
+		ctx, conn, err = launchDockerDaemon(ctx, daemonID, teleroutePort, cr)
 	} else {
-		args := []string{connectorDaemon, "connector-foreground"}
-		if cr.UserDaemonProfilingPort > 0 {
-			args = append(args, "--pprof", strconv.Itoa(int(cr.UserDaemonProfilingPort)))
-		}
-		if proc.IsAdmin() {
-			// No use having multiple daemons when running as root.
-			args = append(args, "--embed-network")
-		}
-		dlog.Debugf(ctx, "Creating daemon info file %s (runs on host, or both CLI and daemon runs in container)", daemonID.Name)
-		err = daemon.SaveInfo(ctx,
-			&daemon.Info{
-				DaemonPort:   0,
-				Name:         daemonID.Name,
-				KubeContext:  daemonID.KubeContext,
-				Namespace:    daemonID.Namespace,
-				ExposedPorts: cr.ExposedPorts,
-				Hostname:     cr.Hostname,
-			}, daemonID.InfoFileName())
-		if err != nil {
-			return ctx, false, err
-		}
-		defer func() {
-			if err != nil {
-				file := daemonID.InfoFileName()
-				dlog.Debugf(ctx, "Deleting daemon info %s due to launch error: %v", file, err)
-				_ = daemon.DeleteInfo(ctx, file)
-			}
-		}()
-
-		if err = proc.StartInBackground(false, args...); err != nil {
-			return ctx, false, errcat.NoDaemonLogs.Newf("failed to launch the connector service: %w", err)
-		}
-		conn, err = socket.Dial(ctx, socket.UserDaemonPath(ctx), true)
+		ctx, conn, err = launchHostDaemon(ctx, daemonID, connectorDaemon, cr)
 	}
 	if err != nil {
 		return ctx, false, err
@@ -369,10 +413,7 @@ func getConnectorVersion(ctx context.Context, cc connector.ConnectorClient) (*co
 	}
 	b.Reset()
 	var vi *common.VersionInfo
-	err := backoff.Retry(func() (err error) {
-		vi, err = cc.Version(ctx, &emptypb.Empty{})
-		return err
-	}, &b)
+	vi, err := cc.Version(ctx, &emptypb.Empty{})
 	return vi, err
 }
 
