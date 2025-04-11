@@ -10,6 +10,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/network/arp"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -28,6 +29,7 @@ func NewStack(ctx context.Context, dev stack.LinkEndpoint, streamCreator tunnel.
 		NetworkProtocols: []stack.NetworkProtocolFactory{
 			ipv4.NewProtocol,
 			ipv6.NewProtocol,
+			arp.NewProtocol,
 		},
 		TransportProtocols: []stack.TransportProtocolFactory{
 			icmp.NewProtocol4,

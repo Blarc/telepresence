@@ -3,11 +3,14 @@ package vif
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/netip"
 	"unsafe"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/rawfile"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/link/fdbased"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 
@@ -38,7 +41,7 @@ func openTun(_ context.Context) (*device, error) {
 	}()
 
 	ifr, err := unix.NewIfreq("tel%d")
-	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
+	ifr.SetUint16(unix.IFF_TAP | unix.IFF_NO_PI)
 
 	err = unix.IoctlSetInt(fd, unix.TUNSETIFF, int(uintptr(unsafe.Pointer(ifr))))
 	if err != nil {
@@ -52,30 +55,20 @@ func openTun(_ context.Context) (*device, error) {
 	// fd is Closed. ReadPacket() will still wait for data to arrive.
 	//
 	// See: https://github.com/golang/go/issues/30426#issuecomment-470044803
-	_ = unix.SetNonblock(fd, true)
-
-	var index uint32
-	err = withSocket(unix.AF_INET, func(provisioningSocket int) error {
-		// Bring the device up. This is how it's done in ifconfig.
-		if err = ioctl(provisioningSocket, unix.SIOCGIFFLAGS, unsafe.Pointer(ifr)); err != nil {
-			return fmt.Errorf("failed to get flags for %s: %w", name, err)
-		}
-
-		ifr.SetUint16(ifr.Uint16() | unix.IFF_UP | unix.IFF_RUNNING)
-		if err = ioctl(provisioningSocket, unix.SIOCSIFFLAGS, unsafe.Pointer(ifr)); err != nil {
-			return fmt.Errorf("failed to set flags for %s: %w", name, err)
-		}
-
-		if err = ioctl(provisioningSocket, unix.SIOCGIFINDEX, unsafe.Pointer(ifr)); err != nil {
-			return fmt.Errorf("get interface index on %s failed: %w", name, err)
-		}
-		index = ifr.Uint32()
-		return nil
-	})
+	err = unix.SetNonblock(fd, true)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to set TAP fd non-blocking: %w", err)
 	}
-	return &device{fd: fd, name: name, interfaceIndex: index}, nil
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve TAP link: %w", err)
+	}
+	err = netlink.LinkSetUp(link)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set link UP: %w", err)
+	}
+	attrs := link.Attrs()
+	return &device{fd: fd, name: name, interfaceIndex: uint32(attrs.Index)}, nil
 }
 
 func (d *device) addSubnet(_ context.Context, pfx netip.Prefix) error {
@@ -100,17 +93,7 @@ func (d *device) removeSubnet(ctx context.Context, pfx netip.Prefix) error {
 }
 
 func (d *device) getMTU() (mtu uint32, err error) {
-	err = withSocket(unix.AF_INET, func(fd int) error {
-		ifr, err := unix.NewIfreq(d.name)
-		if err == nil {
-			err = ioctl(fd, unix.SIOCGIFMTU, unsafe.Pointer(ifr))
-			if err == nil {
-				mtu = ifr.Uint32()
-			}
-		}
-		return err
-	})
-	return mtu, err
+	return rawfile.GetMTU(d.name)
 }
 
 func (d *device) createLinkEndpoint() (stack.LinkEndpoint, error) {
@@ -118,10 +101,16 @@ func (d *device) createLinkEndpoint() (stack.LinkEndpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	mac, err := net.ParseMAC("40:38:ab:ac:0d:e0")
+	if err != nil {
+		return nil, err
+	}
 	ep, err := fdbased.New(&fdbased.Options{
 		FDs:                []int{d.fd},
 		MTU:                mtu,
 		PacketDispatchMode: fdbased.RecvMMsg,
+		EthernetHeader:     true,
+		Address:            tcpip.LinkAddress(mac),
 	})
 	if err != nil {
 		return nil, err
