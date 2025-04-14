@@ -399,7 +399,7 @@ func ensureUniqueLocalPorts(spec *manager.InterceptSpec, pi *manager.PreparedInt
 			return nil, err
 		}
 		if _, ok := ports[pp]; ok {
-			return nil, fmt.Errorf("multiple use of port %s on %s", pp, spec.TargetHost)
+			return nil, fmt.Errorf("multiple use of port %s on %s", &pp, spec.TargetHost)
 		}
 		ports[pp] = struct{}{}
 	}
@@ -410,7 +410,7 @@ func ensureUniqueLocalPorts(spec *manager.InterceptSpec, pi *manager.PreparedInt
 		}
 		pp := pm.To()
 		if _, ok := ports[pp]; ok {
-			return nil, fmt.Errorf("multiple use of port %s on %s", pp, spec.TargetHost)
+			return nil, fmt.Errorf("multiple use of port %s on %s", &pp, spec.TargetHost)
 		}
 		ports[pp] = struct{}{}
 	}
